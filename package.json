@@ -1,0 +1,30 @@
+{
+  "name": "interstellar-transport-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json",
+    "build:web": "tsc -p tsconfig.json --noEmit && vite build",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/test/simulation.test.js",
+    "demo": "npm run build && node dist/src/demo.js",
+    "demo:campaign": "npm run build && node dist/src/campaign-demo.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@types/three": "^0.185.0",
+    "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^5.9.0",
+    "vite": "^8.2.0"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "three": "^0.185.1",
+    "tsl-textures": "^3.0.4"
+  }
+}
