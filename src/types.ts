@@ -29,7 +29,9 @@ export interface StarSystem {
   x: number;
   y: number;
   spectralClass: "O" | "B" | "A" | "F" | "G" | "K" | "M";
-  hubPortId: string;
+  inhabited: boolean;
+  navigationNodeId: string;
+  hubPortId: string | null;
 }
 
 export interface SystemStar {
@@ -134,7 +136,16 @@ export interface GeneratedGalaxy {
   systems: readonly StarSystem[];
   systemDetails: Readonly<Record<string, PlanetarySystemDetails>>;
   ports: readonly Starport[];
+  systemLanes: readonly SystemLane[];
   worldLegs: readonly WorldLeg[];
+}
+
+export interface SystemLane {
+  id: string;
+  fromSystemId: string;
+  toSystemId: string;
+  mode: Extract<TravelMode, "warp" | "hyperspace">;
+  distance: number;
 }
 
 export interface WorldLeg {

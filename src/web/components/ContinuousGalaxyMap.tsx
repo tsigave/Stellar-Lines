@@ -205,8 +205,8 @@ export function ContinuousGalaxyMap({
   const semanticTransitionRef = useRef(false);
   const zoomIntentRef = useRef(camera.zoom);
   const suppressClickRef = useRef(false);
-  const systemsByHub = useMemo(
-    () => new Map(galaxy.systems.map((system) => [system.hubPortId, system])),
+  const systemsById = useMemo(
+    () => new Map(galaxy.systems.map((system) => [system.id, system])),
     [galaxy],
   );
   const focusedSystem =
@@ -687,7 +687,7 @@ export function ContinuousGalaxyMap({
     setFocusedSystemId(system.id);
     setFocusedPlanetId(null);
     setFocusedMoonId(null);
-    onSelectPort(system.hubPortId);
+    if (system.hubPortId) onSelectPort(system.hubPortId);
   };
 
   const enterSystem = (system: StarSystem) => {
@@ -880,17 +880,17 @@ export function ContinuousGalaxyMap({
           <SpaceBackdrop id="continuous-deep-space" seed={`${galaxy.config.seed}-continuous-space`} />
 
           <g className="galaxy-network" opacity={galaxyOpacity}>
-            {galaxy.worldLegs.filter((leg) => leg.mode === "hyperspace").map((leg) => {
-              const from = systemsByHub.get(leg.fromPortId);
-              const to = systemsByHub.get(leg.toPortId);
+            {galaxy.systemLanes.filter((lane) => lane.mode === "hyperspace").map((lane) => {
+              const from = systemsById.get(lane.fromSystemId);
+              const to = systemsById.get(lane.toSystemId);
               if (!from || !to) return null;
-              return <line key={leg.id} className="hyper-lane" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7} />;
+              return <line key={lane.id} className="hyper-lane" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7} />;
             })}
-            {galaxy.worldLegs.filter((leg) => leg.mode === "warp").map((leg) => {
-              const from = systemsByHub.get(leg.fromPortId);
-              const to = systemsByHub.get(leg.toPortId);
+            {galaxy.systemLanes.filter((lane) => lane.mode === "warp").map((lane) => {
+              const from = systemsById.get(lane.fromSystemId);
+              const to = systemsById.get(lane.toSystemId);
               if (!from || !to) return null;
-              return <line key={leg.id} className="warp-lane" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7} />;
+              return <line key={lane.id} className="warp-lane" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7} />;
             })}
           </g>
 
@@ -1106,7 +1106,9 @@ export function ContinuousGalaxyMap({
                 cy={systemOrigin.y}
                 r={14 / camera.zoom}
                 onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => onSelectPort(focusedSystem.hubPortId)}
+                onClick={() => {
+                  if (focusedSystem.hubPortId) onSelectPort(focusedSystem.hubPortId);
+                }}
                 onDoubleClick={() => enterSystem(focusedSystem)}
               />
             </g>

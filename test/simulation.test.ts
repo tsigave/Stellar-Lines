@@ -3,8 +3,12 @@ import test from "node:test";
 import {
   buildJourneyOptions,
   buildRouteServices,
+  buyShip,
   chooseJourneys,
+  createGeneratedGameEvents,
   createGeneratedScenario,
+  createNewGame,
+  createPlayerRoute,
   DEFAULT_GALAXY_CONFIG,
   deterministicVariation,
   eventIntensity,
@@ -15,6 +19,8 @@ import {
   simulateCampaign,
   shortestReferenceTime,
   simulateDay,
+  advanceGameDay,
+  closePlayerRoute,
   type MarketDemand,
   type MarketEvent,
   type GalaxyGenerationConfig,
@@ -364,22 +370,33 @@ test("随机银河严格遵守数量配置并可由种子复现", () => {
     ...DEFAULT_GALAXY_CONFIG,
     seed: "repeatable-sector",
     systemCount: 12,
-    starportCount: 47,
+    starportCount: 8,
   };
   const first = generateGalaxy(config);
   const second = generateGalaxy(config);
 
   assert.equal(first.systems.length, 12);
-  assert.equal(first.ports.length, 47);
+  assert.equal(first.ports.length, 8);
   assert.deepEqual(first, second);
+  assert.ok(first.systems.some((system) => system.inhabited));
+  assert.ok(first.systems.some((system) => !system.inhabited));
+  const navigationNodeIds = new Set(first.systems.map((system) => system.navigationNodeId));
+  assert.ok(first.worldLegs.every(
+    (leg) => navigationNodeIds.has(leg.fromPortId) && navigationNodeIds.has(leg.toPortId),
+  ));
   let ringedPlanetCount = 0;
   for (const system of first.systems) {
     const details = first.systemDetails[system.id]!;
     const localPorts = first.ports.filter((port) => port.systemId === system.id);
     assert.ok(details.stars.length >= 1 && details.stars.length <= 3);
     assert.ok(details.planets.length >= 4 && details.planets.length <= 9);
-    assert.ok(details.planets.some((planet) => planet.inhabited));
+    assert.equal(
+      details.planets.some((planet) => planet.inhabited),
+      system.inhabited,
+    );
     assert.equal(details.starportLocations.length, localPorts.length);
+    assert.equal(localPorts.length, system.inhabited ? 1 : 0);
+    assert.equal(system.hubPortId !== null, system.inhabited);
     for (const planet of details.planets) {
       if (planet.hasRings) ringedPlanetCount += 1;
       assert.ok(planet.ringTilt >= -28 && planet.ringTilt <= 28);
@@ -404,6 +421,22 @@ test("随机银河严格遵守数量配置并可由种子复现", () => {
     assert.ok(localPorts.every((port) => (port.populationMillions ?? 0) > 0));
   }
   assert.ok(ringedPlanetCount > 0);
+
+  const fullyInhabited = generateGalaxy({
+    ...DEFAULT_GALAXY_CONFIG,
+    seed: "fully-inhabited-sector",
+    systemCount: 5,
+    starportCount: 5,
+  });
+  assert.ok(fullyInhabited.systems.every((system) => system.inhabited));
+  assert.ok(fullyInhabited.systems.every(
+    (system) => fullyInhabited.ports.filter((port) => port.systemId === system.id).length === 1,
+  ));
+  assert.throws(() => generateGalaxy({
+    ...DEFAULT_GALAXY_CONFIG,
+    systemCount: 5,
+    starportCount: 6,
+  }));
 });
 
 test("高发展度市场产生更多跨星客运需求", () => {
@@ -448,7 +481,7 @@ test("高热度超空间市场会自动出现竞争航线", () => {
     ...DEFAULT_GALAXY_CONFIG,
     seed: "dense-developed-markets",
     systemCount: 18,
-    starportCount: 50,
+    starportCount: 14,
     laneDensity: 0.85,
   });
   const competitiveRoutes = generated.scenario.routes.filter((route) =>
@@ -466,7 +499,7 @@ test("高热度超空间市场会自动出现竞争航线", () => {
   }
 });
 
-test("所有超空间拓扑都保持恒星系连通", () => {
+test("所有超空间拓扑都保持全部行星系连通", () => {
   const topologies: GalaxyGenerationConfig["topology"][] = [
     "web",
     "radial",
@@ -479,17 +512,16 @@ test("所有超空间拓扑都保持恒星系连通", () => {
       ...DEFAULT_GALAXY_CONFIG,
       seed: `connected-${topology}`,
       systemCount: 14,
-      starportCount: 38,
+      starportCount: 10,
       topology,
       laneDensity: 0,
     });
-    const systemsByHub = new Map(galaxy.systems.map((system) => [system.hubPortId, system.id]));
-    const neighbors = new Map(galaxy.systems.map((system) => [system.id, new Set<string>()]));
-    for (const leg of galaxy.worldLegs.filter((candidate) => candidate.mode === "hyperspace")) {
-      const left = systemsByHub.get(leg.fromPortId)!;
-      const right = systemsByHub.get(leg.toPortId)!;
-      neighbors.get(left)!.add(right);
-      neighbors.get(right)!.add(left);
+    const neighbors = new Map(
+      galaxy.systems.map((system) => [system.id, new Set<string>()]),
+    );
+    for (const lane of galaxy.systemLanes.filter((candidate) => candidate.mode === "hyperspace")) {
+      neighbors.get(lane.fromSystemId)!.add(lane.toSystemId);
+      neighbors.get(lane.toSystemId)!.add(lane.fromSystemId);
     }
     const visited = new Set<string>();
     const queue = [galaxy.systems[0]!.id];
@@ -500,6 +532,11 @@ test("所有超空间拓扑都保持恒星系连通", () => {
       queue.push(...neighbors.get(current)!);
     }
     assert.equal(visited.size, galaxy.systems.length, `${topology} should be connected`);
+    assert.ok(
+      galaxy.systems
+        .filter((system) => !system.inhabited)
+        .every((system) => neighbors.get(system.id)!.size > 0),
+    );
   }
 });
 
@@ -520,4 +557,114 @@ test("生成场景中的初始航线均有效并可完成日结算", () => {
   assert.equal(result.days.length, 1);
   assert.ok(result.companies.some((company) => company.companyId === "player"));
   assert.ok(result.companies.every((company) => Number.isFinite(company.operatingProfit)));
+});
+
+test("可玩状态支持购船、开线、日结算和关闭航线的完整循环", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy);
+  const initialCash = game.cash;
+  assert.equal(game.fleet.length, 1);
+  assert.equal(game.routes.length, 0);
+
+  const yacht = generated.scenario.shipTypes.find((ship) => ship.id === "meridian-liner")!;
+  const purchased = buyShip(game, yacht.id, generated.scenario.shipTypes);
+  game = purchased.state;
+  assert.equal(game.fleet.length, 2);
+  assert.equal(game.cash, initialCash - yacht.purchasePrice);
+
+  // Restore the affordable starter state and assign its free Meridian liner.
+  game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy);
+  const origin = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  const opened = createPlayerRoute(
+    game,
+    {
+      name: "First Corridor",
+      originPortId: origin.id,
+      destinationPortId: destination.id,
+      shipId: game.fleet[0]!.id,
+      fareMultiplier: 1,
+    },
+    generated.scenario.ports,
+    generated.scenario.worldLegs,
+    generated.scenario.shipTypes,
+  );
+  game = opened.state;
+  assert.equal(game.routes.length, 1);
+  assert.equal(game.fleet[0]!.routeId, game.routes[0]!.id);
+  assert.ok(game.cash < initialCash);
+
+  const advanced = advanceGameDay(game, generated.scenario, generated.galaxy);
+  game = advanced.state;
+  assert.equal(game.day, 2);
+  assert.equal(game.history.length, 1);
+  assert.equal(game.history[0]!.routes.length, 1);
+  assert.ok(Number.isFinite(game.history[0]!.profit));
+
+  game = closePlayerRoute(game, game.routes[0]!.id).state;
+  assert.equal(game.routes.length, 0);
+  assert.equal(game.fleet[0]!.routeId, null);
+});
+
+test("玩家航线可沿连通网络跨越无人行星系", () => {
+  const generated = createGeneratedScenario({
+    ...DEFAULT_GALAXY_CONFIG,
+    seed: "sparse-playable-network",
+    systemCount: 12,
+    starportCount: 3,
+    laneDensity: 0,
+  });
+  let game = createNewGame(generated.galaxy.config, generated.galaxy);
+  const [origin, destination] = generated.galaxy.ports;
+  assert.ok(origin && destination);
+  game = createPlayerRoute(
+    game,
+    {
+      name: "Deep Corridor",
+      originPortId: origin.id,
+      destinationPortId: destination.id,
+      shipId: game.fleet[0]!.id,
+      fareMultiplier: 1,
+    },
+    generated.scenario.ports,
+    generated.scenario.worldLegs,
+    generated.scenario.shipTypes,
+  ).state;
+  assert.equal(game.routes.length, 1);
+  assert.doesNotThrow(() => advanceGameDay(game, generated.scenario, generated.galaxy));
+});
+
+test("随机可玩场景包含确定性的预告事件", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const first = createGeneratedGameEvents(generated.galaxy);
+  const second = createGeneratedGameEvents(generated.galaxy);
+  assert.deepEqual(first, second);
+  assert.equal(first.length, 3);
+  assert.ok(first.every((event) => event.affectedPortIds.length > 0));
+});
+
+test("默认星域存在可在期限内达成目标的经营策略", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy);
+  const origin = generated.galaxy.ports.find((port) => port.name === "Nadir Vale Hub")!;
+  const destination = generated.galaxy.ports.find((port) => port.name === "Orion Crossing Hub")!;
+  game = createPlayerRoute(
+    game,
+    {
+      name: "Profitable Corridor",
+      originPortId: origin.id,
+      destinationPortId: destination.id,
+      shipId: game.fleet[0]!.id,
+      fareMultiplier: 1,
+    },
+    generated.scenario.ports,
+    generated.scenario.worldLegs,
+    generated.scenario.shipTypes,
+  ).state;
+
+  while (game.status === "playing") {
+    game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  }
+  assert.equal(game.status, "won");
+  assert.ok(game.day <= 121);
 });

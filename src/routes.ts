@@ -31,22 +31,82 @@ function expandRouteStops(route: Route): ExpandedStop[] {
   return [...stops, ...returning, { ...stops[0]!, sourceIndex: 0 }];
 }
 
-function findLeg(
+function orientLeg(
+  leg: WorldLeg,
+  fromPortId: string,
+): WorldLeg {
+  return leg.fromPortId === fromPortId
+    ? leg
+    : {
+        ...leg,
+        id: `${leg.id}:reverse`,
+        fromPortId: leg.toPortId,
+        toPortId: leg.fromPortId,
+      };
+}
+
+function findLegPath(
   fromPortId: string,
   toPortId: string,
   worldLegs: readonly WorldLeg[],
-): WorldLeg | undefined {
-  const direct = worldLegs.find(
-    (leg) => leg.isOpen && leg.fromPortId === fromPortId && leg.toPortId === toPortId,
-  );
-  if (direct) return direct;
+  ship: ShipType,
+): WorldLeg[] | undefined {
+  const usableLegs = worldLegs.filter((leg) => {
+    const maximumRange = ship.maxRangeByMode[leg.mode];
+    return (
+      leg.isOpen &&
+      ship.supportedModes.includes(leg.mode) &&
+      maximumRange !== undefined &&
+      leg.distance <= maximumRange
+    );
+  });
+  const nodeIds = new Set(usableLegs.flatMap((leg) => [leg.fromPortId, leg.toPortId]));
+  if (!nodeIds.has(fromPortId) || !nodeIds.has(toPortId)) return undefined;
 
-  const reverse = worldLegs.find(
-    (leg) => leg.isOpen && leg.fromPortId === toPortId && leg.toPortId === fromPortId,
-  );
-  return reverse
-    ? { ...reverse, id: `${reverse.id}:reverse`, fromPortId, toPortId }
-    : undefined;
+  const distances = new Map<string, number>([[fromPortId, 0]]);
+  const previous = new Map<string, { nodeId: string; leg: WorldLeg }>();
+  const unvisited = new Set(nodeIds);
+  while (unvisited.size > 0) {
+    let current: string | undefined;
+    let currentDistance = Number.POSITIVE_INFINITY;
+    for (const nodeId of unvisited) {
+      const distance = distances.get(nodeId) ?? Number.POSITIVE_INFINITY;
+      if (distance < currentDistance) {
+        current = nodeId;
+        currentDistance = distance;
+      }
+    }
+    if (!current || !Number.isFinite(currentDistance)) break;
+    if (current === toPortId) break;
+    unvisited.delete(current);
+
+    for (const leg of usableLegs) {
+      const neighbor =
+        leg.fromPortId === current
+          ? leg.toPortId
+          : leg.toPortId === current
+            ? leg.fromPortId
+            : undefined;
+      if (!neighbor || !unvisited.has(neighbor)) continue;
+      const speed = modeValue(ship.speedByMode, leg.mode, "Speed");
+      const candidate = currentDistance + (leg.distance / speed) * leg.timeModifier;
+      if (candidate < (distances.get(neighbor) ?? Number.POSITIVE_INFINITY)) {
+        distances.set(neighbor, candidate);
+        previous.set(neighbor, { nodeId: current, leg: orientLeg(leg, current) });
+      }
+    }
+  }
+
+  if (!previous.has(toPortId)) return undefined;
+  const path: WorldLeg[] = [];
+  let current = toPortId;
+  while (current !== fromPortId) {
+    const step = previous.get(current);
+    if (!step) return undefined;
+    path.unshift(step.leg);
+    current = step.nodeId;
+  }
+  return path;
 }
 
 function modeValue(
@@ -92,7 +152,7 @@ export function buildRouteServices(
   const physicalLegs: Array<{
     from: ExpandedStop;
     to: ExpandedStop;
-    leg: WorldLeg;
+    legs: readonly WorldLeg[];
     travelHours: number;
     stopHours: number;
     fuelCost: number;
@@ -102,30 +162,27 @@ export function buildRouteServices(
   for (let index = 0; index < expandedStops.length - 1; index += 1) {
     const from = expandedStops[index]!;
     const to = expandedStops[index + 1]!;
-    const leg = findLeg(from.portId, to.portId, worldLegs);
-    if (!leg) throw new Error(`No open world leg from ${from.portId} to ${to.portId}`);
-    if (!ship.supportedModes.includes(leg.mode)) {
-      throw new Error(`${ship.name} does not support ${leg.mode}`);
+    const legs = findLegPath(from.portId, to.portId, worldLegs, ship);
+    if (!legs) {
+      throw new Error(`${ship.name} cannot find an open path from ${from.portId} to ${to.portId}`);
     }
-    const maximumRange = modeValue(ship.maxRangeByMode, leg.mode, "Maximum range");
-    if (leg.distance > maximumRange) {
-      throw new Error(`${ship.name} cannot fly ${leg.id}: range exceeded`);
-    }
-
-    const speed = modeValue(ship.speedByMode, leg.mode, "Speed");
-    const fuelPerDistance = modeValue(ship.fuelPerDistanceByMode, leg.mode, "Fuel rate");
-    const travelHours = (leg.distance / speed) * leg.timeModifier;
+    const travelHours = legs.reduce((sum, leg) => {
+      const speed = modeValue(ship.speedByMode, leg.mode, "Speed");
+      return sum + (leg.distance / speed) * leg.timeModifier;
+    }, 0);
     const stopHours = Math.max(to.minimumStopHours, ship.turnaroundHours);
     const fromPort = portsById.get(from.portId)!;
     const toPort = portsById.get(to.portId)!;
-    const fuelCost =
-      leg.distance * fuelPerDistance * leg.fuelModifier * fromPort.fuelPrice;
+    const fuelCost = legs.reduce((sum, leg) => {
+      const fuelPerDistance = modeValue(ship.fuelPerDistanceByMode, leg.mode, "Fuel rate");
+      return sum + leg.distance * fuelPerDistance * leg.fuelModifier * fromPort.fuelPrice;
+    }, 0);
     const operatingCost =
       fuelCost +
       travelHours * (ship.maintenancePerFlightHour + ship.crewCostPerFlightHour) +
       toPort.serviceFee;
 
-    physicalLegs.push({ from, to, leg, travelHours, stopHours, fuelCost, operatingCost });
+    physicalLegs.push({ from, to, legs, travelHours, stopHours, fuelCost, operatingCost });
   }
 
   const cycleHours =
@@ -142,7 +199,10 @@ export function buildRouteServices(
     const group = physicalLegs.slice(groupStart, index + 1);
     const first = group[0]!;
     const last = group[group.length - 1]!;
-    const distance = group.reduce((sum, item) => sum + item.leg.distance, 0);
+    const distance = group.reduce(
+      (sum, item) => sum + item.legs.reduce((legSum, leg) => legSum + leg.distance, 0),
+      0,
+    );
     const inVehicleHours = group.reduce(
       (sum, item, groupIndex) =>
         sum + item.travelHours + (groupIndex < group.length - 1 ? item.stopHours : 0),
@@ -171,7 +231,7 @@ export function buildRouteServices(
       companyId: route.companyId,
       fromPortId: first.from.portId,
       toPortId: last.to.portId,
-      modePath: group.map((item) => item.leg.mode),
+      modePath: group.flatMap((item) => item.legs.map((leg) => leg.mode)),
       distance,
       inVehicleHours,
       destinationDwellHours: last.stopHours,

@@ -4,23 +4,16 @@ import {
   useRef,
   useState,
   type PointerEvent,
-  type MouseEvent,
   type WheelEvent,
 } from "react";
 import { createRandom } from "../../generation/random.js";
-import type { GeneratedGalaxy } from "../../types.js";
-import {
-  clampAnchor,
-  LAYER_ZOOM_THRESHOLD,
-  type MapEntryRequest,
-} from "../mapTransitions.js";
+import type { GeneratedGalaxy, Route } from "../../types.js";
 
 interface GalaxyMapProps {
-  active: boolean;
   galaxy: GeneratedGalaxy;
+  playerRoutes?: readonly Route[];
   selectedPortId: string;
   onSelectPort: (portId: string) => void;
-  onEnterSystem: (systemId: string, entry: MapEntryRequest) => void;
 }
 
 interface Camera {
@@ -60,18 +53,16 @@ function clampCamera(camera: Camera): Camera {
 }
 
 export function GalaxyMap({
-  active,
   galaxy,
+  playerRoutes = [],
   selectedPortId,
   onSelectPort,
-  onEnterSystem,
 }: GalaxyMapProps) {
   const [camera, setCamera] = useState<Camera>({ centerX: 500, centerY: 350, zoom: 1 });
   const [isDragging, setIsDragging] = useState(false);
-  const [focusedSystemId, setFocusedSystemId] = useState<string | null>(null);
   const dragState = useRef<DragState | null>(null);
-  const systemsByHub = useMemo(
-    () => new Map(galaxy.systems.map((system) => [system.hubPortId, system])),
+  const systemsById = useMemo(
+    () => new Map(galaxy.systems.map((system) => [system.id, system])),
     [galaxy],
   );
   const backgroundStars = useMemo(() => {
@@ -93,27 +84,8 @@ export function GalaxyMap({
   const viewHeight = MAP_HEIGHT / camera.zoom;
   const viewBox = `${camera.centerX - viewWidth / 2} ${camera.centerY - viewHeight / 2} ${viewWidth} ${viewHeight}`;
 
-  const anchorForSystem = (systemId: string) => {
-    const system = galaxy.systems.find((candidate) => candidate.id === systemId)!;
-    return clampAnchor({
-      x: (system.x * 10 - (camera.centerX - viewWidth / 2)) / viewWidth,
-      y: (system.y * 7 - (camera.centerY - viewHeight / 2)) / viewHeight,
-    });
-  };
-
   const changeZoom = (delta: number) => {
-    const nextZoom = Math.max(0.75, Math.min(LAYER_ZOOM_THRESHOLD + 0.35, camera.zoom + delta));
-    if (nextZoom >= LAYER_ZOOM_THRESHOLD) {
-      const target =
-        galaxy.systems.find((system) => system.id === focusedSystemId) ??
-        [...galaxy.systems].sort(
-          (left, right) =>
-            Math.hypot(left.x * 10 - camera.centerX, left.y * 7 - camera.centerY) -
-            Math.hypot(right.x * 10 - camera.centerX, right.y * 7 - camera.centerY),
-        )[0];
-      if (target) onEnterSystem(target.id, { mode: "zoom", anchor: anchorForSystem(target.id) });
-      return;
-    }
+    const nextZoom = Math.max(0.75, Math.min(2.5, camera.zoom + delta));
     setCamera((current) => clampCamera({ ...current, zoom: nextZoom }));
   };
 
@@ -161,29 +133,14 @@ export function GalaxyMap({
 
   const resetCamera = () => setCamera({ centerX: 500, centerY: 350, zoom: 1 });
 
-  const enterByDoubleClick = (systemId: string, event: MouseEvent<SVGCircleElement>) => {
-    event.stopPropagation();
-    const bounds = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
-    const anchor = bounds
-      ? clampAnchor({
-          x: (event.clientX - bounds.left) / bounds.width,
-          y: (event.clientY - bounds.top) / bounds.height,
-        })
-      : anchorForSystem(systemId);
-    onEnterSystem(systemId, { mode: "double", anchor });
-  };
-
   return (
-    <section
-      className={`map-panel glass-panel map-layer ${active ? "active" : "inactive"}`}
-      aria-hidden={!active}
-    >
+    <section className="map-panel glass-panel galaxy-overview-map">
       <div className="map-toolbar">
         <div>
           <span className="eyebrow">LIVE NETWORK</span>
           <h2>银河航路图</h2>
         </div>
-        <div className="map-hint">拖动地图 · 双击恒星进入 · 放大至400%自动切换</div>
+        <div className="map-hint">首版银河总览 · 拖动与缩放 · 点击有人星系查看市场</div>
         <div className="map-actions">
           <span>{Math.round(camera.zoom * 100)}%</span>
           <button onClick={() => changeZoom(0.2)}>＋</button>
@@ -224,20 +181,42 @@ export function GalaxyMap({
           />
 
           <g className="network-lines">
-            {galaxy.worldLegs.filter((leg) => leg.mode === "hyperspace").map((leg) => {
-              const from = systemsByHub.get(leg.fromPortId);
-              const to = systemsByHub.get(leg.toPortId);
+            {galaxy.systemLanes.filter((lane) => lane.mode === "hyperspace").map((lane) => {
+              const from = systemsById.get(lane.fromSystemId);
+              const to = systemsById.get(lane.toSystemId);
               if (!from || !to) return null;
               return (
-                <line key={leg.id} className="hyper-lane" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7} />
+                <line key={lane.id} className="hyper-lane" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7} />
               );
             })}
-            {galaxy.worldLegs.filter((leg) => leg.mode === "warp").map((leg) => {
-              const from = systemsByHub.get(leg.fromPortId);
-              const to = systemsByHub.get(leg.toPortId);
+            {galaxy.systemLanes.filter((lane) => lane.mode === "warp").map((lane) => {
+              const from = systemsById.get(lane.fromSystemId);
+              const to = systemsById.get(lane.toSystemId);
               if (!from || !to) return null;
               return (
-                <line key={leg.id} className="warp-lane" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7} />
+                <line key={lane.id} className="warp-lane" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7} />
+              );
+            })}
+          </g>
+
+          <g className="player-route-lines" pointerEvents="none">
+            {playerRoutes.filter((route) => route.active).map((route) => {
+              const fromPort = galaxy.ports.find((port) => port.id === route.stops[0]?.portId);
+              const toPort = galaxy.ports.find((port) => port.id === route.stops.at(-1)?.portId);
+              const from = fromPort ? systemsById.get(fromPort.systemId) : undefined;
+              const to = toPort ? systemsById.get(toPort.systemId) : undefined;
+              if (!from || !to) return null;
+              return (
+                <line
+                  key={route.id}
+                  className="player-route-line"
+                  x1={from.x * 10}
+                  y1={from.y * 7}
+                  x2={to.x * 10}
+                  y2={to.y * 7}
+                >
+                  <title>{route.name}</title>
+                </line>
               );
             })}
           </g>
@@ -249,18 +228,20 @@ export function GalaxyMap({
             const y = system.y * 7;
             const hubSelected = system.hubPortId === selectedPortId;
             return (
-              <g key={system.id} className="system-node">
-                <circle cx={x} cy={y} r="24" fill="none" stroke="#78d6d0" strokeOpacity="0.13" />
+              <g
+                key={system.id}
+                className={`system-node ${system.inhabited ? "inhabited-system" : "uninhabited-system"}`}
+              >
+                <title>{system.inhabited ? `${system.name}，有人居住` : `${system.name}，无人居住`}</title>
+                <circle className="system-status-aura" cx={x} cy={y} r="24" />
                 <circle
                   className="system-hit-target"
                   cx={x} cy={y} r="13"
                   onPointerDown={(event) => event.stopPropagation()}
-                  onPointerEnter={() => setFocusedSystemId(system.id)}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onSelectPort(system.hubPortId);
+                    if (system.hubPortId) onSelectPort(system.hubPortId);
                   }}
-                  onDoubleClick={(event) => enterByDoubleClick(system.id, event)}
                 />
                 <g className={hubSelected ? "galaxy-star-group selected" : "galaxy-star-group"} pointerEvents="none">
                   {details.stars.map((star) => (
@@ -296,7 +277,9 @@ export function GalaxyMap({
                   );
                 })}
                 <text x={x + 14} y={y - 13}>{system.name}</text>
-                <text className="system-meta" x={x + 14} y={y + 3}>{localPorts.length} PORTS · 点击查看</text>
+                <text className="system-meta" x={x + 14} y={y + 3}>
+                  {system.inhabited ? `有人居住 · ${localPorts.length} 星港` : "无人居住 · 未开发"}
+                </text>
               </g>
             );
           })}
@@ -304,7 +287,9 @@ export function GalaxyMap({
         <div className="map-legend">
           <span><i className="legend-line hyper" />超空间</span>
           <span><i className="legend-line warp" />曲速直达</span>
-          <span><i className="legend-dot" />可选星港</span>
+          <span><i className="legend-line player" />玩家航线</span>
+          <span><i className="legend-dot inhabited" />有人行星系</span>
+          <span><i className="legend-dot uninhabited" />无人行星系</span>
         </div>
       </div>
     </section>

@@ -1,5 +1,4 @@
 import type { Dispatch, SetStateAction } from "react";
-import { MAX_GENERATED_STARPORTS } from "../../generation/galaxy.js";
 import type { GalaxyGenerationConfig } from "../../types.js";
 
 interface GenerationPanelProps {
@@ -34,10 +33,7 @@ export function GenerationPanel({
     setConfig((current) => ({
       ...current,
       systemCount,
-      starportCount: Math.max(
-        systemCount,
-        Math.min(current.starportCount, systemCount * 6, MAX_GENERATED_STARPORTS),
-      ),
+      starportCount: Math.min(current.starportCount, systemCount),
     }));
   };
 
@@ -46,7 +42,7 @@ export function GenerationPanel({
       <div className="panel-heading">
         <span className="eyebrow">GALAXY FORGE</span>
         <h2>银河生成器</h2>
-        <p>通过种子重复生成同一片星域。</p>
+        <p>生成有人与无人两类行星系。</p>
       </div>
 
       <label className="field-label" htmlFor="seed">随机种子</label>
@@ -71,7 +67,7 @@ export function GenerationPanel({
       </div>
 
       <div className="slider-heading">
-        <label htmlFor="system-count">恒星系数量</label>
+        <label htmlFor="system-count">行星系数量</label>
         <output>{config.systemCount}</output>
       </div>
       <input
@@ -90,8 +86,8 @@ export function GenerationPanel({
       <input
         id="port-count"
         type="range"
-        min={config.systemCount}
-        max={Math.min(config.systemCount * 6, MAX_GENERATED_STARPORTS)}
+        min="2"
+        max={config.systemCount}
         value={config.starportCount}
         onChange={(event) =>
           setConfig((current) => ({ ...current, starportCount: Number(event.target.value) }))
@@ -153,7 +149,7 @@ export function GenerationPanel({
       </button>
 
       <div className="generation-stats">
-        <div><strong>{generatedCounts.systems}</strong><span>恒星系</span></div>
+        <div><strong>{generatedCounts.systems}</strong><span>行星系</span></div>
         <div><strong>{generatedCounts.ports}</strong><span>星港</span></div>
         <div><strong>{generatedCounts.lanes}</strong><span>超空间航道</span></div>
       </div>

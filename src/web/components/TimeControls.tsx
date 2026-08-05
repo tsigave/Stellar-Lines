@@ -7,9 +7,10 @@ interface TimeControlsProps {
   speed: GameSpeed;
   onSpeedChange: (speed: GameSpeed) => void;
   onAdvance: () => void;
+  disabled?: boolean;
 }
 
-export function TimeControls({ day, speed, onSpeedChange, onAdvance }: TimeControlsProps) {
+export function TimeControls({ day, speed, onSpeedChange, onAdvance, disabled = false }: TimeControlsProps) {
   return (
     <footer className="time-controls glass-panel">
       <div className="date-block">
@@ -17,11 +18,11 @@ export function TimeControls({ day, speed, onSpeedChange, onAdvance }: TimeContr
         <strong>{formatGameDate(day)}</strong>
       </div>
       <div className="speed-controls" aria-label="时间速度">
-        <button className={speed === 0 ? "active" : ""} onClick={() => onSpeedChange(0)}>Ⅱ</button>
-        <button className={speed === 1 ? "active" : ""} onClick={() => onSpeedChange(1)}>▶ <span>1×</span></button>
-        <button className={speed === 4 ? "active" : ""} onClick={() => onSpeedChange(4)}>▶▶ <span>4×</span></button>
-        <button className={speed === 16 ? "active" : ""} onClick={() => onSpeedChange(16)}>▶▶▶ <span>16×</span></button>
-        <button className="step-button" onClick={onAdvance} title="推进一天">＋1日</button>
+        <button disabled={disabled} className={speed === 0 ? "active" : ""} onClick={() => onSpeedChange(0)}>Ⅱ</button>
+        <button disabled={disabled} className={speed === 1 ? "active" : ""} onClick={() => onSpeedChange(1)}>▶ <span>1×</span></button>
+        <button disabled={disabled} className={speed === 4 ? "active" : ""} onClick={() => onSpeedChange(4)}>▶▶ <span>4×</span></button>
+        <button disabled={disabled} className={speed === 16 ? "active" : ""} onClick={() => onSpeedChange(16)}>▶▶▶ <span>16×</span></button>
+        <button disabled={disabled} className="step-button" onClick={onAdvance} title="推进一天">＋1日</button>
       </div>
       <div className="simulation-status"><i />模拟同步</div>
     </footer>

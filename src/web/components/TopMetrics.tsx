@@ -1,28 +1,25 @@
-import type { CompanySettlement } from "../../types.js";
+import type { GameState } from "../../game.js";
 import { formatCredits, formatGameDate, formatNumber } from "../format.js";
-import type { FinanceTotals } from "./FinancePanel.js";
 
 interface TopMetricsProps {
-  day: number;
-  today: CompanySettlement | undefined;
-  cumulative: FinanceTotals;
-  startingBalance: number;
+  game: GameState;
 }
 
-export function TopMetrics({ day, today, cumulative, startingBalance }: TopMetricsProps) {
-  const profit = today?.operatingProfit ?? 0;
+export function TopMetrics({ game }: TopMetricsProps) {
+  const latest = game.history.at(-1);
+  const profit = latest?.profit ?? 0;
   const metrics = [
-    { label: "可用资金", value: formatCredits(startingBalance + cumulative.profit), tone: "primary" },
-    { label: "今日收入", value: formatCredits(today?.ticketRevenue ?? 0), tone: "normal" },
-    { label: "今日成本", value: formatCredits(today?.operatingCost ?? 0), tone: "warning" },
-    { label: "今日利润", value: formatCredits(profit), tone: profit >= 0 ? "positive" : "negative" },
-    { label: "今日旅客航段", value: formatNumber(today?.passengers ?? 0), tone: "normal" },
+    { label: "可用资金", value: formatCredits(game.cash), tone: "primary" },
+    { label: "昨日收入", value: formatCredits(latest?.revenue ?? 0), tone: "normal" },
+    { label: "昨日总成本", value: formatCredits((latest?.operatingCost ?? 0) + (latest?.overhead ?? 0)), tone: "warning" },
+    { label: "昨日利润", value: formatCredits(profit), tone: profit >= 0 ? "positive" : "negative" },
+    { label: "昨日旅客航段", value: formatNumber(latest?.passengers ?? 0), tone: "normal" },
   ];
   return (
     <section className="top-metrics">
       <div className="metric-date">
         <span>公司运营总览</span>
-        <strong>{formatGameDate(day)}</strong>
+        <strong>{formatGameDate(game.day)}</strong>
       </div>
       {metrics.map((metric) => (
         <div className={`top-metric ${metric.tone}`} key={metric.label}>

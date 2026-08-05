@@ -10,6 +10,7 @@ import type {
   SimulationScenario,
   Starport,
   StarSystem,
+  SystemLane,
   SystemPlanet,
   SystemMoon,
   TravelMode,
@@ -105,13 +106,11 @@ interface SystemPair {
 export const DEFAULT_GALAXY_CONFIG: GalaxyGenerationConfig = {
   seed: "frontier-8042",
   systemCount: 8,
-  starportCount: 24,
+  starportCount: 6,
   shape: "spiral",
   topology: "mixed",
   laneDensity: 0.35,
 };
-
-export const MAX_GENERATED_STARPORTS = 60;
 
 export function validateGalaxyConfig(config: GalaxyGenerationConfig): void {
   if (!config.seed.trim()) throw new Error("Seed cannot be empty");
@@ -120,10 +119,10 @@ export function validateGalaxyConfig(config: GalaxyGenerationConfig): void {
   }
   if (
     !Number.isInteger(config.starportCount) ||
-    config.starportCount < config.systemCount ||
-    config.starportCount > Math.min(config.systemCount * 6, MAX_GENERATED_STARPORTS)
+    config.starportCount < 1 ||
+    config.starportCount > config.systemCount
   ) {
-    throw new Error(`Starport count must be between one per system and ${MAX_GENERATED_STARPORTS}`);
+    throw new Error("Starport count must be between 1 and the system count");
   }
   if (config.laneDensity < 0 || config.laneDensity > 1) {
     throw new Error("Lane density must be between 0 and 1");
@@ -288,20 +287,6 @@ function uniqueSystemNames(count: number, random: RandomSource): string[] {
   return random.shuffle(combinations).slice(0, count);
 }
 
-function allocatePortCounts(systemCount: number, total: number, random: RandomSource): number[] {
-  const counts = Array.from({ length: systemCount }, () => 1);
-  let remaining = total - systemCount;
-  while (remaining > 0) {
-    const candidates = counts
-      .map((count, index) => ({ count, index }))
-      .filter((entry) => entry.count < 6);
-    const selected = random.pick(candidates);
-    counts[selected.index] = selected.count + 1;
-    remaining -= 1;
-  }
-  return counts;
-}
-
 function createPort(
   system: StarSystem,
   index: number,
@@ -402,7 +387,9 @@ function createSystemDetails(
   );
   const inhabitedCount = Math.min(
     habitableCandidates.length,
-    Math.max(1, Math.min(3, Math.ceil(localPorts.length / 2))),
+    system.inhabited
+      ? Math.max(1, Math.min(3, Math.ceil(localPorts.length / 2)))
+      : 0,
   );
   const inhabitedIds = new Set(
     habitableCandidates.slice(0, inhabitedCount).map((planet) => planet.id),
@@ -515,20 +502,31 @@ export function generateGalaxy(config: GalaxyGenerationConfig): GeneratedGalaxy 
   const random = createRandom(config.seed);
   const points = generatePoints(config.systemCount, config.shape, random);
   const names = uniqueSystemNames(config.systemCount, random);
-  const systems: StarSystem[] = points.map((point, index) => ({
-    id: `system-${index + 1}`,
-    name: names[index]!,
-    x: point.x,
-    y: point.y,
-    spectralClass: random.pick(SPECTRAL_CLASSES),
-    hubPortId: `system-${index + 1}-port-1`,
-  }));
-  const portCounts = allocatePortCounts(config.systemCount, config.starportCount, random);
-  const generatedPorts = systems.flatMap((system, systemIndex) =>
-    Array.from({ length: portCounts[systemIndex]! }, (_, portIndex) =>
-      createPort(system, portIndex, random),
-    ),
+  // In the first version, one inhabited system always owns exactly one port.
+  const inhabitedSystemCount = config.starportCount;
+  const inhabitedSystemIds = new Set(
+    random
+      .shuffle(Array.from({ length: config.systemCount }, (_, index) => `system-${index + 1}`))
+      .slice(0, inhabitedSystemCount),
   );
+  const systems: StarSystem[] = points.map((point, index) => {
+    const id = `system-${index + 1}`;
+    const inhabited = inhabitedSystemIds.has(id);
+    const hubPortId = inhabited ? `${id}-port-1` : null;
+    return {
+      id,
+      name: names[index]!,
+      x: point.x,
+      y: point.y,
+      spectralClass: random.pick(SPECTRAL_CLASSES),
+      inhabited,
+      navigationNodeId: hubPortId ?? `${id}-navigation`,
+      hubPortId,
+    };
+  });
+  const generatedPorts = systems
+    .filter((system) => system.inhabited)
+    .map((system) => createPort(system, 0, random));
   const systemDetails = Object.fromEntries(
     systems.map((system) => [
       system.id,
@@ -578,24 +576,8 @@ export function generateGalaxy(config: GalaxyGenerationConfig): GeneratedGalaxy 
       populationMillions: Number(populationMillions.toFixed(2)),
     };
   });
+  const systemLanes: SystemLane[] = [];
   const worldLegs: WorldLeg[] = [];
-
-  for (const system of systems) {
-    const localPorts = ports.filter((candidate) => candidate.systemId === system.id);
-    for (const localPort of localPorts.slice(1)) {
-      worldLegs.push(
-        worldLeg(
-          `local-${system.id}-${localPort.id}`,
-          system.hubPortId,
-          localPort.id,
-          "sublight",
-          random.integer(3, 18),
-          random,
-        ),
-      );
-    }
-  }
-
   const hyperspacePairs = generateHyperspacePairs(
     points,
     config.topology,
@@ -605,13 +587,22 @@ export function generateGalaxy(config: GalaxyGenerationConfig): GeneratedGalaxy 
   for (const pair of hyperspacePairs) {
     const left = systems[pair.left]!;
     const right = systems[pair.right]!;
+    const id = `hyper-${left.id}-${right.id}`;
+    const distance = Math.min(105, 18 + pair.distance * 1.05);
+    systemLanes.push({
+      id,
+      fromSystemId: left.id,
+      toSystemId: right.id,
+      mode: "hyperspace",
+      distance: Number(distance.toFixed(2)),
+    });
     worldLegs.push(
       worldLeg(
-        `hyper-${left.id}-${right.id}`,
-        left.hubPortId,
-        right.hubPortId,
+        id,
+        left.navigationNodeId,
+        right.navigationNodeId,
         "hyperspace",
-        Math.min(105, 18 + pair.distance * 1.05),
+        distance,
         random,
       ),
     );
@@ -623,23 +614,32 @@ export function generateGalaxy(config: GalaxyGenerationConfig): GeneratedGalaxy 
   const warpCandidates = allPairs(points)
     .filter((pair) => !selectedHyperspace.has(pairKey(pair.left, pair.right)))
     .sort((left, right) => left.distance - right.distance)
-    .slice(0, Math.max(1, Math.floor(config.systemCount / 3)));
+    .slice(0, Math.max(1, Math.floor(systems.length / 3)));
   for (const pair of warpCandidates) {
     const left = systems[pair.left]!;
     const right = systems[pair.right]!;
+    const id = `warp-${left.id}-${right.id}`;
+    const distance = Math.min(62, 18 + pair.distance * 0.72);
+    systemLanes.push({
+      id,
+      fromSystemId: left.id,
+      toSystemId: right.id,
+      mode: "warp",
+      distance: Number(distance.toFixed(2)),
+    });
     worldLegs.push(
       worldLeg(
-        `warp-${left.id}-${right.id}`,
-        left.hubPortId,
-        right.hubPortId,
+        id,
+        left.navigationNodeId,
+        right.navigationNodeId,
         "warp",
-        Math.min(62, 18 + pair.distance * 0.72),
+        distance,
         random,
       ),
     );
   }
 
-  return { config: { ...config }, systems, systemDetails, ports, worldLegs };
+  return { config: { ...config }, systems, systemDetails, ports, systemLanes, worldLegs };
 }
 
 function pricing(multiplier: number): Route["pricing"] {
@@ -684,8 +684,15 @@ export function createGeneratedScenario(
   config: GalaxyGenerationConfig,
 ): GeneratedScenarioResult {
   const galaxy = generateGalaxy(config);
-  const hyperLegs = galaxy.worldLegs.filter((leg) => leg.mode === "hyperspace");
-  const warpLegs = galaxy.worldLegs.filter((leg) => leg.mode === "warp");
+  const portsById = new Map(galaxy.ports.map((port) => [port.id, port]));
+  const connectsTwoStarports = (leg: WorldLeg) =>
+    portsById.has(leg.fromPortId) && portsById.has(leg.toPortId);
+  const hyperLegs = galaxy.worldLegs.filter(
+    (leg) => leg.mode === "hyperspace" && connectsTwoStarports(leg),
+  );
+  const warpLegs = galaxy.worldLegs.filter(
+    (leg) => leg.mode === "warp" && connectsTwoStarports(leg),
+  );
   const routes: Route[] = hyperLegs.map((leg, index) => {
     const companyIndex = index % 4;
     if (companyIndex === 0) {
@@ -712,7 +719,6 @@ export function createGeneratedScenario(
     );
   });
 
-  const portsById = new Map(galaxy.ports.map((port) => [port.id, port]));
   hyperLegs.forEach((leg, index) => {
     const from = portsById.get(leg.fromPortId)!;
     const to = portsById.get(leg.toPortId)!;
@@ -742,7 +748,7 @@ export function createGeneratedScenario(
         generatedRoute(
           `regional-${index + 1}-${localIndex + 1}`,
           index % 3 === 0 ? "player" : "orbital-regional",
-          [system.hubPortId, localPort.id],
+          [system.hubPortId!, localPort.id],
           "sparrow-shuttle",
           1,
           0.92,
