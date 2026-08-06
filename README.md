@@ -1,6 +1,6 @@
 # 星际航运经营游戏
 
-一款以星际客运网络规划为核心的网页经营游戏，目前已经具备可完整游玩的 v0.3 prototype。
+一款以星际客运网络规划为核心的网页经营游戏，目前已经具备可完整游玩的 v0.4 prototype。
 
 玩家先选择一个星球作为公司基地，再从有限资金与一艘客轮开始，通过观察需求与燃料价格、设计航线、配置船只、安排维护和调整票价，在 AI 竞争与市场事件中争取于 120 日内达成初级现金或客流目标。达标后不会结局，可以继续自由经营。
 
@@ -10,6 +10,7 @@
 - [概念验证场景：六星系](docs/design/sample-scenario.md)
 - [随机银河生成规格](docs/design/procedural-galaxy.md)
 - [舰队燃料、统一配置与系列维护](docs/design/fleet-fuel-and-configurations.md)
+- [v0.4 至 v0.10 总体版本计划](docs/version%20planning/README.md)
 - [技术储备：三级连续星图](docs/technical-reserve/three-level-map.md)
 
 ## 当前实现
