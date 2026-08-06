@@ -330,9 +330,12 @@ test("事件只在开始后生效，并在恢复期平滑消退", () => {
   assert.equal(marketEventDemandMultiplier([event], 25, "a", "c", "business"), 2);
 });
 
-test("概念验证场景包含20个星港、6种船型且所有航线有效", () => {
+test("概念验证场景包含20个星港、11种单一超光速船型且所有航线有效", () => {
   assert.equal(PROOF_OF_CONCEPT_SCENARIO.ports.length, 20);
-  assert.equal(PROOF_OF_CONCEPT_SCENARIO.shipTypes.length, 6);
+  assert.equal(PROOF_OF_CONCEPT_SCENARIO.shipTypes.length, 11);
+  assert.ok(PROOF_OF_CONCEPT_SCENARIO.shipTypes.every((shipType) =>
+    shipType.supportedModes.filter((mode) => mode === "warp" || mode === "hyperspace").length <= 1,
+  ));
 
   const ships = new Map(
     PROOF_OF_CONCEPT_SCENARIO.shipTypes.map((shipType) => [shipType.id, shipType]),
@@ -771,7 +774,7 @@ test("五光年航段至少需要一天且船况不会改变速度", () => {
     id: "five-light-years", fromPortId: "a", toPortId: "b", mode: "hyperspace",
     distance: 5, hazard: 0, timeModifier: 1, fuelModifier: 1, isOpen: true,
   };
-  const ship = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "celestial-yacht")!;
+  const ship = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "aurora-clipper")!;
   const route: Route = {
     id: "minimum-time", companyId: "player", name: "Minimum Time", kind: "return",
     routingMode: "hyperspace",

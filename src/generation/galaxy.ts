@@ -714,7 +714,7 @@ export function createGeneratedScenario(
     if (companyIndex === 2) {
       return generatedRoute(
         `business-hyper-${index + 1}`, "swift-business", [leg.fromPortId, leg.toPortId],
-        "celestial-yacht", 1, 1.35,
+        "aurora-clipper", 1, 1.35,
       );
     }
     return generatedRoute(
@@ -737,7 +737,7 @@ export function createGeneratedScenario(
         `competitive-hyper-${index + 1}`,
         competitor,
         [leg.fromPortId, leg.toPortId],
-        competitor === "nova-budget" ? "atlas-liner" : "celestial-yacht",
+        competitor === "nova-budget" ? "atlas-liner" : "aurora-clipper",
         competitor === "nova-budget" ? 3 : 1,
         competitor === "nova-budget" ? 0.8 : 1.28,
       ),

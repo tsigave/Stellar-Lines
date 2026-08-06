@@ -205,12 +205,47 @@ export const PROOF_OF_CONCEPT_SHIPS: readonly ShipType[] = [
   },
   {
     id: "celestial-yacht", name: "Celestial Yacht", seats: 84, purchasePrice: 3_600_000,
-    supportedModes: ["sublight", "warp", "hyperspace"],
-    speedByMode: { sublight: 1.1, warp: 4.2, hyperspace: 5 },
-    maxRangeByMode: { sublight: 30, warp: 80, hyperspace: 120 },
-    fuelPerDistanceByMode: { sublight: 1.1, warp: 1.8, hyperspace: 1.2 },
+    supportedModes: ["sublight", "warp"],
+    speedByMode: { sublight: 1.1, warp: 4.2 },
+    maxRangeByMode: { sublight: 30, warp: 80 },
+    fuelPerDistanceByMode: { sublight: 1.1, warp: 1.8 },
     maintenancePerFlightHour: 118, crewCostPerFlightHour: 64, reliability: 0.975,
     comfort: 96, minimumPortLevel: 4, turnaroundHours: 1.6, operationalAvailability: 0.94,
+  },
+  {
+    id: "comet-courier", name: "Comet Courier", seats: 24, purchasePrice: 680_000,
+    supportedModes: ["sublight", "warp"], speedByMode: { sublight: 1.15, warp: 4 },
+    maxRangeByMode: { sublight: 26, warp: 58 }, fuelPerDistanceByMode: { sublight: 0.48, warp: 1.18 },
+    maintenancePerFlightHour: 31, crewCostPerFlightHour: 20, reliability: 0.955,
+    comfort: 68, minimumPortLevel: 2, turnaroundHours: 0.7, operationalAvailability: 0.95,
+  },
+  {
+    id: "aurora-clipper", name: "Aurora Clipper", seats: 96, purchasePrice: 1_450_000,
+    supportedModes: ["sublight", "hyperspace"], speedByMode: { sublight: 1, hyperspace: 5 },
+    maxRangeByMode: { sublight: 30, hyperspace: 130 }, fuelPerDistanceByMode: { sublight: 0.68, hyperspace: 0.82 },
+    maintenancePerFlightHour: 54, crewCostPerFlightHour: 34, reliability: 0.972,
+    comfort: 82, minimumPortLevel: 3, turnaroundHours: 1.1, operationalAvailability: 0.95,
+  },
+  {
+    id: "horizon-coach", name: "Horizon Coach", seats: 140, purchasePrice: 1_250_000,
+    supportedModes: ["sublight", "hyperspace"], speedByMode: { sublight: 0.75, hyperspace: 2.6 },
+    maxRangeByMode: { sublight: 26, hyperspace: 105 }, fuelPerDistanceByMode: { sublight: 0.7, hyperspace: 0.56 },
+    maintenancePerFlightHour: 44, crewCostPerFlightHour: 31, reliability: 0.94,
+    comfort: 60, minimumPortLevel: 2, turnaroundHours: 1.5, operationalAvailability: 0.93,
+  },
+  {
+    id: "vector-executive", name: "Vector Executive", seats: 36, purchasePrice: 1_650_000,
+    supportedModes: ["sublight", "warp"], speedByMode: { sublight: 1.2, warp: 5 },
+    maxRangeByMode: { sublight: 28, warp: 70 }, fuelPerDistanceByMode: { sublight: 0.72, warp: 1.7 },
+    maintenancePerFlightHour: 63, crewCostPerFlightHour: 38, reliability: 0.978,
+    comfort: 90, minimumPortLevel: 4, turnaroundHours: 0.85, operationalAvailability: 0.96,
+  },
+  {
+    id: "odyssey-sleeper", name: "Odyssey Sleeper", seats: 240, purchasePrice: 3_100_000,
+    supportedModes: ["sublight", "hyperspace"], speedByMode: { sublight: 0.72, hyperspace: 3.6 },
+    maxRangeByMode: { sublight: 25, hyperspace: 125 }, fuelPerDistanceByMode: { sublight: 1.08, hyperspace: 0.92 },
+    maintenancePerFlightHour: 88, crewCostPerFlightHour: 58, reliability: 0.958,
+    comfort: 88, minimumPortLevel: 4, turnaroundHours: 2.3, operationalAvailability: 0.92,
   },
 ];
 
@@ -293,7 +328,7 @@ export const PROOF_OF_CONCEPT_ROUTES: readonly Route[] = [
   route(
     "luxury-grand-tour", "celestial-lines", "Grand Tour",
     ["alpha-prime", "alpha-junction", "vega-hub", "aurora"],
-    "celestial-yacht", 1, 1.7,
+    "aurora-clipper", 1, 1.7,
   ),
 ];
 
