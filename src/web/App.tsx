@@ -177,7 +177,7 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.3</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.4</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
         <div className="header-indicator"><i />自动存档</div>
