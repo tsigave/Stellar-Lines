@@ -580,6 +580,8 @@ function routeSummaries(
 
 function applyAutomaticMaintenance(
   fleet: readonly OwnedShip[],
+  routes: readonly Route[],
+  scenario: SimulationScenario,
   day: number,
   cash: number,
   threshold: number,
@@ -590,6 +592,15 @@ function applyAutomaticMaintenance(
   const maintainedShipNames: string[] = [];
   const nextFleet = fleet.map((ship) => {
     if (ship.maintenanceUntilDay !== null || ship.condition > threshold) return ship;
+    const route = routes.find((candidate) => candidate.id === ship.routeId);
+    const isAtMainBase = !route || !route.active || (() => {
+      const schedule = routeSchedule(route, scenario);
+      const cycleHours = schedule.roundTripDays * 24;
+      if (cycleHours <= 24) return true;
+      const phase = ((day - 1) * 24) % cycleHours;
+      return phase < 0.001 || phase >= cycleHours - 24;
+    })();
+    if (!isAtMainBase) return ship;
     const shipType = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
     if (!shipType) return ship;
     const cost = shipMaintenanceCost(shipType);
@@ -665,6 +676,8 @@ export function advanceGameDay(
   const agedFleet = ageFleetAfterDay(state, scenario);
   const automaticMaintenance = applyAutomaticMaintenance(
     agedFleet,
+    state.routes,
+    scenario,
     nextDay,
     cash,
     state.autoMaintenanceThreshold,
@@ -695,7 +708,7 @@ export function advanceGameDay(
       primaryGoalCompletedOnDay,
     },
     message: automaticMaintenance.maintainedShipNames.length > 0
-      ? `${automaticMaintenance.maintainedShipNames.join("、")} 已达到 ${state.autoMaintenanceThreshold}% 阈值并自动进场维护。`
+      ? `${automaticMaintenance.maintainedShipNames.join("、")} 返抵主基地，维护值已低于 ${state.autoMaintenanceThreshold}% 阈值并自动进场维护。`
       : justCompletedGoal
       ? "初级经营目标达成！公司进入自由经营阶段，游戏将继续进行。"
       : lost

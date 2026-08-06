@@ -794,10 +794,16 @@ test("船只到达玩家设定阈值后自动维修", () => {
     name: "Automatic Maintenance", originPortId: base.id, destinationPortId: destination.id,
     shipId: game.fleet[0]!.id, fareMultiplier: 1, routingMode: "hyperspace",
   }, generated.galaxy, generated.scenario.shipTypes).state;
+  while (game.fleet[0]!.condition > 95) {
+    game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  }
+  assert.notEqual(shipMaintenanceState(game.fleet[0]!, game.day), "maintenance");
+  const belowThresholdDay = game.day;
   for (let index = 0; index < 12 && shipMaintenanceState(game.fleet[0]!, game.day) !== "maintenance"; index += 1) {
     game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
   }
   assert.equal(shipMaintenanceState(game.fleet[0]!, game.day), "maintenance");
+  assert.ok(game.day > belowThresholdDay);
   assert.equal(game.fleet[0]!.condition, 100);
 });
 
