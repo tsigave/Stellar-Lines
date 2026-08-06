@@ -75,6 +75,7 @@ function pathToJourney(
   let weightedComfort = 0;
   let weightedReputation = 0;
   let weightedOnTime = 0;
+  let weightedSatisfaction = 0;
   let weightHours = 0;
 
   path.forEach((service, index) => {
@@ -84,6 +85,7 @@ function pathToJourney(
     weightedComfort += service.comfort * serviceWeight;
     weightedReputation += service.reputation * serviceWeight;
     weightedOnTime += service.onTimeRate * serviceWeight;
+    weightedSatisfaction += service.satisfactionByClass[market.passengerClass] * serviceWeight;
 
     const next = path[index + 1];
     if (!next) return;
@@ -115,6 +117,7 @@ function pathToJourney(
     comfort: weightedComfort / weightHours,
     reputation: weightedReputation / weightHours,
     onTimeRate: weightedOnTime / weightHours,
+    satisfaction: weightedSatisfaction / weightHours,
   };
 }
 
@@ -125,7 +128,7 @@ export function buildJourneyOptions(
 ): JourneyOption[] {
   const maximumServiceLegs = options.maximumServiceLegs ?? 3;
   const maximumResults = options.maximumResults ?? 12;
-  const maximumTimeRatio = options.maximumTimeRatio ?? 3;
+  const maximumTimeRatio = options.maximumTimeRatio ?? 12;
   const minimumTransferHours = options.minimumTransferHours ?? 2;
   const choiceParameters = options.choiceParameters ?? DEFAULT_CHOICE_PARAMETERS;
   const outgoing = buildOutgoingServices(services);
@@ -160,7 +163,7 @@ export function buildJourneyOptionsForMarkets(
 ): ReadonlyMap<string, readonly JourneyOption[]> {
   const maximumServiceLegs = options.maximumServiceLegs ?? 3;
   const maximumResults = options.maximumResults ?? 12;
-  const maximumTimeRatio = options.maximumTimeRatio ?? 3;
+  const maximumTimeRatio = options.maximumTimeRatio ?? 12;
   const minimumTransferHours = options.minimumTransferHours ?? 2;
   const choiceParameters = options.choiceParameters ?? DEFAULT_CHOICE_PARAMETERS;
   const outgoing = buildOutgoingServices(services);

@@ -584,11 +584,15 @@ export function generateGalaxy(config: GalaxyGenerationConfig): GeneratedGalaxy 
     config.laneDensity,
     random,
   );
+  const averagePairDistance = hyperspacePairs.reduce((sum, pair) => sum + pair.distance, 0) /
+    Math.max(1, hyperspacePairs.length);
+  const toLightYears = (mapDistance: number): number =>
+    Math.max(5, Math.min(32, mapDistance * (10 / averagePairDistance)));
   for (const pair of hyperspacePairs) {
     const left = systems[pair.left]!;
     const right = systems[pair.right]!;
     const id = `hyper-${left.id}-${right.id}`;
-    const distance = Math.min(105, 18 + pair.distance * 1.05);
+    const distance = toLightYears(pair.distance);
     systemLanes.push({
       id,
       fromSystemId: left.id,
@@ -619,7 +623,7 @@ export function generateGalaxy(config: GalaxyGenerationConfig): GeneratedGalaxy 
     const left = systems[pair.left]!;
     const right = systems[pair.right]!;
     const id = `warp-${left.id}-${right.id}`;
-    const distance = Math.min(62, 18 + pair.distance * 0.72);
+    const distance = toLightYears(pair.distance);
     systemLanes.push({
       id,
       fromSystemId: left.id,

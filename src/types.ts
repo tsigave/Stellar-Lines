@@ -194,6 +194,7 @@ export interface Route {
   companyId: string;
   name: string;
   kind: "return" | "loop";
+  routingMode?: Extract<TravelMode, "warp" | "hyperspace">;
   stops: readonly RouteStop[];
   shipTypeId: string;
   assignedShips: number;
@@ -219,6 +220,7 @@ export interface ServiceLeg {
   comfort: number;
   reputation: number;
   onTimeRate: number;
+  satisfactionByClass: Record<PassengerClass, number>;
   dailyOperatingCost: number;
 }
 
@@ -238,6 +240,7 @@ export interface JourneyOption {
   comfort: number;
   reputation: number;
   onTimeRate: number;
+  satisfaction: number;
 }
 
 export interface MarketKey {
@@ -260,6 +263,7 @@ export interface ChoiceWeights {
   comfort: number;
   reputation: number;
   reliability: number;
+  satisfaction: number;
 }
 
 export interface ChoiceParameters {
@@ -297,6 +301,7 @@ export interface ServiceSettlement {
   capacity: number;
   passengers: number;
   loadFactor: number;
+  satisfaction: number;
   ticketRevenue: number;
   operatingCost: number;
 }
@@ -347,6 +352,7 @@ export interface SimulationScenario {
   shipTypes: readonly ShipType[];
   routes: readonly Route[];
   companyReputation: Readonly<Record<string, number>>;
+  shipConditionByRoute?: Readonly<Record<string, number>>;
   events: readonly MarketEvent[];
 }
 

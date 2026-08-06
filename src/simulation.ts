@@ -59,6 +59,7 @@ export function simulateDay(input: SimulateDayInput): DaySettlement {
 
   const passengerByService = new Map<string, number>();
   const revenueByService = new Map<string, number>();
+  const satisfactionByService = new Map<string, number>();
   for (const allocation of capacityAllocation.allocations) {
     allocation.option.serviceLegIds.forEach((serviceLegId, index) => {
       passengerByService.set(
@@ -69,6 +70,11 @@ export function simulateDay(input: SimulateDayInput): DaySettlement {
         serviceLegId,
         (revenueByService.get(serviceLegId) ?? 0) +
           allocation.actualPassengers * (allocation.option.fareByServiceLeg[index] ?? 0),
+      );
+      satisfactionByService.set(
+        serviceLegId,
+        (satisfactionByService.get(serviceLegId) ?? 0) +
+          allocation.actualPassengers * allocation.option.satisfaction,
       );
     });
   }
@@ -81,6 +87,9 @@ export function simulateDay(input: SimulateDayInput): DaySettlement {
       passengers,
       loadFactor:
         service.dailySeatCapacity > 0 ? passengers / service.dailySeatCapacity : 0,
+      satisfaction: passengers > 0
+        ? (satisfactionByService.get(service.id) ?? 0) / passengers
+        : service.satisfactionByClass.economy,
       ticketRevenue: revenueByService.get(service.id) ?? 0,
       operatingCost: service.dailyOperatingCost,
     };

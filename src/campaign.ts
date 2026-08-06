@@ -41,6 +41,7 @@ export function simulateCampaign(
       if (!ship) throw new Error(`Unknown ship type ${route.shipTypeId} on route ${route.id}`);
       return buildRouteServices(route, ship, currentPorts, currentWorldLegs, {
         companyReputation: scenario.companyReputation[route.companyId] ?? 50,
+        shipCondition: scenario.shipConditionByRoute?.[route.id] ?? 100,
       });
     });
     const markets = generateMarketDemands(scenario.ports, referenceTimes, {

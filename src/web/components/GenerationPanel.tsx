@@ -7,6 +7,9 @@ interface GenerationPanelProps {
   onGenerate: () => void;
   error: string | null;
   generatedCounts: { systems: number; ports: number; lanes: number };
+  baseOptions?: readonly { value: string; label: string }[];
+  basePortId?: string;
+  onBasePortChange?: (portId: string) => void;
 }
 
 const SHAPE_LABELS: Record<GalaxyGenerationConfig["shape"], string> = {
@@ -28,6 +31,9 @@ export function GenerationPanel({
   onGenerate,
   error,
   generatedCounts,
+  baseOptions = [],
+  basePortId,
+  onBasePortChange,
 }: GenerationPanelProps) {
   const setSystemCount = (systemCount: number) => {
     setConfig((current) => ({
@@ -78,6 +84,18 @@ export function GenerationPanel({
         value={config.systemCount}
         onChange={(event) => setSystemCount(Number(event.target.value))}
       />
+
+      {baseOptions.length > 0 && basePortId && onBasePortChange && (
+        <>
+          <label className="field-label" htmlFor="base-port">初始基地星球</label>
+          <select id="base-port" value={basePortId} onChange={(event) => onBasePortChange(event.target.value)}>
+            {baseOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <p className="base-choice-hint">所有玩家航线都必须从这里出发。</p>
+        </>
+      )}
 
       <div className="slider-heading">
         <label htmlFor="port-count">星港总数</label>
@@ -144,7 +162,7 @@ export function GenerationPanel({
 
       {error && <div className="error-message">{error}</div>}
       <button className="generate-button" onClick={onGenerate}>
-        <span>生成新星域</span>
+        <span>成立公司并开始</span>
         <span aria-hidden="true">✦</span>
       </button>
 

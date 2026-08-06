@@ -11,6 +11,8 @@ import {
   DEFAULT_GALAXY_CONFIG,
   gameScenario,
   isGameState,
+  performShipMaintenance,
+  setAutoMaintenanceThreshold,
   simulateCampaign,
   togglePlayerRoute,
   type CreateRouteInput,
@@ -19,6 +21,7 @@ import {
 } from "../index.js";
 import { CompanyPanel } from "./components/CompanyPanel.js";
 import { DemandPanel } from "./components/DemandPanel.js";
+import { FuelMarketPanel } from "./components/FuelMarketPanel.js";
 import { GalaxyMap } from "./components/GalaxyMap.js";
 import { GenerationPanel } from "./components/GenerationPanel.js";
 import { OperationsPanel } from "./components/OperationsPanel.js";
@@ -30,11 +33,22 @@ const SAVE_KEY = "stellar-lines-v0-save";
 interface GameSession {
   generated: ReturnType<typeof createGeneratedScenario>;
   game: GameState;
+  restored: boolean;
 }
 
-function createSession(config: GalaxyGenerationConfig): GameSession {
+function createSession(
+  config: GalaxyGenerationConfig,
+  basePortId?: string,
+  restored = true,
+): GameSession {
   const generated = createGeneratedScenario(config);
-  return { generated, game: createNewGame(config, generated.galaxy) };
+  const base = basePortId ?? generated.galaxy.ports[0]?.id;
+  if (!base) throw new Error("可玩星域至少需要两个有人星球");
+  return {
+    generated,
+    game: createNewGame(config, generated.galaxy, base),
+    restored,
+  };
 }
 
 function initialSession(): GameSession {
@@ -43,28 +57,43 @@ function initialSession(): GameSession {
     if (serialized) {
       const game: unknown = JSON.parse(serialized);
       if (isGameState(game)) {
-        return { generated: createGeneratedScenario(game.config), game };
+        return { generated: createGeneratedScenario(game.config), game, restored: true };
       }
     }
   } catch {
     // A corrupt or unavailable local save should never prevent a new game.
   }
-  return createSession(DEFAULT_GALAXY_CONFIG);
+  return createSession(DEFAULT_GALAXY_CONFIG, undefined, false);
 }
 
 export function App() {
   const [session, setSession] = useState<GameSession>(initialSession);
   const [config, setConfig] = useState<GalaxyGenerationConfig>(session.game.config);
+  const [draftBasePortId, setDraftBasePortId] = useState(session.game.basePortId);
   const [selectedPortId, setSelectedPortId] = useState(session.game.basePortId);
   const [speed, setSpeed] = useState<GameSpeed>(0);
   const [notice, setNotice] = useState(() =>
-    session.game.history.length > 0
+    session.restored
       ? `自动存档已载入：继续第 ${session.game.day} 日的经营。`
-      : "欢迎登舰：选择起点、目的地和远星一号，建立第一条航线。",
+      : "请先生成星域并选择一个基地星球。",
   );
   const [error, setError] = useState<string | null>(null);
-  const [showNewGame, setShowNewGame] = useState(false);
+  const [showNewGame, setShowNewGame] = useState(!session.restored);
   const { generated, game } = session;
+
+  const newGamePreview = useMemo(() => {
+    try {
+      return createGeneratedScenario(config);
+    } catch {
+      return null;
+    }
+  }, [config]);
+
+  useEffect(() => {
+    if (!newGamePreview?.galaxy.ports.some((port) => port.id === draftBasePortId)) {
+      setDraftBasePortId(newGamePreview?.galaxy.ports[0]?.id ?? "");
+    }
+  }, [draftBasePortId, newGamePreview]);
 
   const events = useMemo(
     () => createGeneratedGameEvents(generated.galaxy),
@@ -76,13 +105,13 @@ export function App() {
   }, [game, generated]);
 
   useEffect(() => {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(game));
-  }, [game]);
+    if (session.restored) window.localStorage.setItem(SAVE_KEY, JSON.stringify(game));
+  }, [game, session.restored]);
 
   const commit = useCallback((action: () => { state: GameState; message: string }) => {
     try {
       const result = action();
-      setSession((current) => ({ ...current, game: result.state }));
+      setSession((current) => ({ ...current, game: result.state, restored: true }));
       setNotice(result.message);
       setError(null);
     } catch (caught) {
@@ -102,37 +131,48 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [advanceOneDay, game.status, speed]);
 
+  const openNewGame = () => {
+    setConfig(game.config);
+    setDraftBasePortId(game.basePortId);
+    setError(null);
+    setShowNewGame(true);
+  };
+
   const startNewGame = () => {
     try {
-      const next = createSession(config);
+      if (!newGamePreview) throw new Error("请先提供有效的银河配置");
+      const next: GameSession = {
+        generated: newGamePreview,
+        game: createNewGame(config, newGamePreview.galaxy, draftBasePortId),
+        restored: true,
+      };
       setSession(next);
       setSelectedPortId(next.game.basePortId);
       setSpeed(0);
       setShowNewGame(false);
       setError(null);
-      setNotice("新公司已成立。你的首艘 Meridian 客轮正在基地待命。");
+      setNotice("公司基地已设立。远星一号正在基地待命，所有航线必须从这里出发。");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "无法生成星域");
     }
   };
 
   const createRoute = (input: CreateRouteInput) =>
-    commit(() => createPlayerRoute(
-      game,
-      input,
-      generated.scenario.ports,
-      generated.scenario.worldLegs,
-      generated.scenario.shipTypes,
-    ));
+    commit(() => createPlayerRoute(game, input, generated.galaxy, generated.scenario.shipTypes));
 
-  const laneCount = generated.galaxy.systemLanes.filter((lane) => lane.mode === "hyperspace").length;
+  const previewLaneCount = newGamePreview?.galaxy.systemLanes.filter((lane) => lane.mode === "hyperspace").length ?? 0;
+  const baseOptions = (newGamePreview?.galaxy.ports ?? []).map((port) => {
+    const system = newGamePreview?.galaxy.systems.find((candidate) => candidate.id === port.systemId);
+    return { value: port.id, label: `${system?.name ?? port.name} · ${port.name}` };
+  });
+
   return (
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.3</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
-        <button className="new-game-button" onClick={() => setShowNewGame(true)}>新游戏</button>
+        <button className="new-game-button" onClick={openNewGame}>新游戏</button>
         <div className="header-indicator"><i />自动存档</div>
       </header>
 
@@ -146,26 +186,31 @@ export function App() {
           selectedPortId={selectedPortId}
           onCreateRoute={createRoute}
           onBuyShip={(shipTypeId) => commit(() => buyShip(game, shipTypeId, generated.scenario.shipTypes))}
+          onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
+          onAutoMaintenanceThresholdChange={(threshold) => commit(() => setAutoMaintenanceThreshold(game, threshold))}
         />
         <div className="map-game-stack">
           <GalaxyMap
             key={generated.galaxy.config.seed}
             galaxy={generated.galaxy}
-            playerRoutes={game.routes}
+            game={game}
+            shipTypes={generated.scenario.shipTypes}
+            basePortId={game.basePortId}
             selectedPortId={selectedPortId}
             onSelectPort={setSelectedPortId}
           />
           {(notice || error) && <div className={error ? "game-toast error" : "game-toast"}>{error ?? notice}</div>}
-          {game.status !== "playing" && (
-            <div className={`game-outcome ${game.status}`}>
-              <span>{game.status === "won" ? "经营目标达成" : "本局经营结束"}</span>
-              <strong>{game.status === "won" ? "远星航运已成为星域骨干承运人" : "资金或期限目标未能维持"}</strong>
-              <button onClick={() => setShowNewGame(true)}>开始新游戏</button>
+          {game.status === "lost" && (
+            <div className="game-outcome lost">
+              <span>本局经营结束</span>
+              <strong>资金耗尽，或未能在期限内完成初级目标</strong>
+              <button onClick={openNewGame}>开始新游戏</button>
             </div>
           )}
         </div>
         <aside className="inspector-panel glass-panel">
           <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} />
+          <FuelMarketPanel game={game} galaxy={generated.galaxy} selectedPortId={selectedPortId} />
           <CompanyPanel
             game={game}
             galaxy={generated.galaxy}
@@ -178,27 +223,24 @@ export function App() {
         </aside>
       </main>
 
-      <TimeControls
-        day={game.day}
-        speed={speed}
-        disabled={game.status !== "playing"}
-        onSpeedChange={setSpeed}
-        onAdvance={advanceOneDay}
-      />
+      <TimeControls day={game.day} speed={speed} disabled={game.status !== "playing"} onSpeedChange={setSpeed} onAdvance={advanceOneDay} />
 
       {showNewGame && (
         <div className="new-game-overlay" role="dialog" aria-modal="true" aria-label="创建新游戏">
           <div className="new-game-dialog glass-panel">
             <div className="new-game-heading">
-              <div><span className="eyebrow">NEW COMPANY</span><h2>创建新游戏</h2></div>
-              <button onClick={() => setShowNewGame(false)}>关闭</button>
+              <div><span className="eyebrow">NEW COMPANY</span><h2>生成星域并选择基地</h2></div>
+              {session.restored && <button onClick={() => setShowNewGame(false)}>关闭</button>}
             </div>
             <GenerationPanel
               config={config}
               setConfig={setConfig}
               onGenerate={startNewGame}
               error={error}
-              generatedCounts={{ systems: config.systemCount, ports: config.starportCount, lanes: laneCount }}
+              generatedCounts={{ systems: newGamePreview?.galaxy.systems.length ?? 0, ports: newGamePreview?.galaxy.ports.length ?? 0, lanes: previewLaneCount }}
+              baseOptions={baseOptions}
+              basePortId={draftBasePortId}
+              onBasePortChange={setDraftBasePortId}
             />
           </div>
         </div>

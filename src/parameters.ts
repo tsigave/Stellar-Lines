@@ -10,6 +10,7 @@ export const DEFAULT_CHOICE_PARAMETERS: ChoiceParameters = {
       comfort: 0.3,
       reputation: 0.3,
       reliability: 0.5,
+      satisfaction: 0.7,
     },
     business: {
       fare: 1.2,
@@ -19,6 +20,7 @@ export const DEFAULT_CHOICE_PARAMETERS: ChoiceParameters = {
       comfort: 0.5,
       reputation: 0.8,
       reliability: 1.5,
+      satisfaction: 1.4,
     },
     premium: {
       fare: 0.8,
@@ -28,6 +30,7 @@ export const DEFAULT_CHOICE_PARAMETERS: ChoiceParameters = {
       comfort: 1.8,
       reputation: 1.5,
       reliability: 1.2,
+      satisfaction: 1.6,
     },
   },
   temperature: {
@@ -76,6 +79,12 @@ export const DEFAULT_CLASS_FARE_MULTIPLIER: Record<PassengerClass, number> = {
 
 export const MODE_REFERENCE_SPEED = {
   sublight: 1,
-  warp: 5,
-  hyperspace: 9,
+  warp: 4,
+  hyperspace: 5,
+} as const;
+
+export const PASSENGER_SATISFACTION_WEIGHTS = {
+  economy: { speed: 0.2, comfort: 0.25, reliability: 0.25, condition: 0.3 },
+  business: { speed: 0.45, comfort: 0.15, reliability: 0.3, condition: 0.1 },
+  premium: { speed: 0.15, comfort: 0.45, reliability: 0.15, condition: 0.25 },
 } as const;

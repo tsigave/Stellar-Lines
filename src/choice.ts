@@ -22,6 +22,7 @@ export function generalizedCost(
   const comfortLoss = 1 - option.comfort / 100;
   const reputationLoss = 1 - option.reputation / 100;
   const delayRisk = 1 - option.onTimeRate;
+  const satisfactionLoss = 1 - option.satisfaction / 100;
 
   return (
     weights.fare * normalizedFare +
@@ -30,7 +31,8 @@ export function generalizedCost(
     weights.transfer * option.transferCount +
     weights.comfort * comfortLoss +
     weights.reputation * reputationLoss +
-    weights.reliability * delayRisk
+    weights.reliability * delayRisk +
+    weights.satisfaction * satisfactionLoss
   );
 }
 

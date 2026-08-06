@@ -41,7 +41,7 @@ export function shortestReferenceTime(
             : undefined;
       if (nextPortId === undefined) continue;
       const travelHours =
-        (leg.distance / MODE_REFERENCE_SPEED[leg.mode]) * leg.timeModifier;
+        (leg.distance / MODE_REFERENCE_SPEED[leg.mode]) * 24 * leg.timeModifier;
       const candidate = currentDistance + travelHours;
       if (candidate < (distances.get(nextPortId) ?? Number.POSITIVE_INFINITY)) {
         distances.set(nextPortId, candidate);
@@ -60,9 +60,12 @@ export function allReferenceTimes(
   for (const origin of ports) {
     for (const destination of ports) {
       if (origin.id === destination.id) continue;
+      const interstellarHours = shortestReferenceTime(origin.id, destination.id, legs);
+      // Every interstellar journey includes a full day for local sublight access,
+      // starport processing and departure/arrival handling.
       result.set(
         marketPairKey(origin.id, destination.id),
-        shortestReferenceTime(origin.id, destination.id, legs),
+        Number.isFinite(interstellarHours) ? interstellarHours + 24 : interstellarHours,
       );
     }
   }

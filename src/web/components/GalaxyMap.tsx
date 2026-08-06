@@ -7,11 +7,15 @@ import {
   type WheelEvent,
 } from "react";
 import { createRandom } from "../../generation/random.js";
-import type { GeneratedGalaxy, Route } from "../../types.js";
+import { gameWorldLegs, shipMaintenanceState, type GameState } from "../../game.js";
+import { MAX_INTERSTELLAR_SPEED_LY_PER_DAY } from "../../routes.js";
+import type { GeneratedGalaxy, Route, ShipType, StarSystem, SystemLane } from "../../types.js";
 
 interface GalaxyMapProps {
   galaxy: GeneratedGalaxy;
-  playerRoutes?: readonly Route[];
+  game: GameState;
+  shipTypes: readonly ShipType[];
+  basePortId?: string;
   selectedPortId: string;
   onSelectPort: (portId: string) => void;
 }
@@ -38,6 +42,161 @@ const CAMERA_BOUNDS = { minimumX: -500, maximumX: 1500, minimumY: -350, maximumY
 const MAP_WIDTH = 1000;
 const MAP_HEIGHT = 700;
 
+interface ShipMapVisual {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  state: "idle" | "traveling" | "docked" | "paused" | "maintenance" | "grounded";
+  status: string;
+  routeName: string | null;
+}
+
+function hyperspacePath(
+  galaxy: GeneratedGalaxy,
+  fromSystemId: string,
+  toSystemId: string,
+): SystemLane[] {
+  const lanes = galaxy.systemLanes.filter((lane) => lane.mode === "hyperspace");
+  const queue = [fromSystemId];
+  const visited = new Set([fromSystemId]);
+  const previous = new Map<string, { systemId: string; lane: SystemLane }>();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current === toSystemId) break;
+    for (const lane of lanes) {
+      const next = lane.fromSystemId === current
+        ? lane.toSystemId
+        : lane.toSystemId === current
+          ? lane.fromSystemId
+          : undefined;
+      if (!next || visited.has(next)) continue;
+      visited.add(next);
+      previous.set(next, { systemId: current, lane });
+      queue.push(next);
+    }
+  }
+  if (!previous.has(toSystemId)) return [];
+  const result: SystemLane[] = [];
+  let current = toSystemId;
+  while (current !== fromSystemId) {
+    const step = previous.get(current);
+    if (!step) return [];
+    result.unshift(step.lane);
+    current = step.systemId;
+  }
+  return result;
+}
+
+function orientedSystemPath(
+  lanes: readonly SystemLane[],
+  fromSystemId: string,
+): string[] {
+  const result = [fromSystemId];
+  let current = fromSystemId;
+  for (const lane of lanes) {
+    const next = lane.fromSystemId === current ? lane.toSystemId : lane.fromSystemId;
+    result.push(next);
+    current = next;
+  }
+  return result;
+}
+
+function positionAlongPath(
+  systems: readonly StarSystem[],
+  durations: readonly number[],
+  elapsedHours: number,
+): { x: number; y: number; segmentProgress: number } {
+  let remaining = elapsedHours;
+  for (let index = 0; index < durations.length; index += 1) {
+    const duration = durations[index]!;
+    const from = systems[index]!;
+    const to = systems[index + 1]!;
+    if (remaining <= duration) {
+      const progress = Math.max(0, Math.min(1, remaining / Math.max(0.01, duration)));
+      return {
+        x: (from.x + (to.x - from.x) * progress) * 10,
+        y: (from.y + (to.y - from.y) * progress) * 7,
+        segmentProgress: progress,
+      };
+    }
+    remaining -= duration;
+  }
+  const end = systems.at(-1)!;
+  return { x: end.x * 10, y: end.y * 7, segmentProgress: 1 };
+}
+
+function buildShipVisuals(
+  galaxy: GeneratedGalaxy,
+  game: GameState,
+  shipTypes: readonly ShipType[],
+): ShipMapVisual[] {
+  const systemsById = new Map(galaxy.systems.map((system) => [system.id, system]));
+  const basePort = galaxy.ports.find((port) => port.id === game.basePortId)!;
+  const baseSystem = systemsById.get(basePort.systemId)!;
+  const worldLegs = gameWorldLegs(galaxy);
+  return game.fleet.map((ship, shipIndex) => {
+    const offsetX = (shipIndex % 3) * 7 - 7;
+    const offsetY = Math.floor(shipIndex / 3) * 7 + 10;
+    const atBase = (state: ShipMapVisual["state"], status: string, routeName: string | null = null): ShipMapVisual => ({
+      id: ship.id,
+      name: ship.name,
+      x: baseSystem.x * 10 + offsetX,
+      y: baseSystem.y * 7 + offsetY,
+      state,
+      status,
+      routeName,
+    });
+    const maintenance = shipMaintenanceState(ship, game.day);
+    const route = game.routes.find((candidate) => candidate.id === ship.routeId);
+    if (maintenance === "maintenance") return atBase("maintenance", `维护中 · 第 ${ship.maintenanceUntilDay} 日恢复`, route?.name ?? null);
+    if (maintenance === "required") return atBase("grounded", "维护值过低 · 强制停航", route?.name ?? null);
+    if (!route) return atBase("idle", "基地待命");
+    if (!route.active) return atBase("paused", "航线暂停", route.name);
+    const shipType = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
+    const fromPort = galaxy.ports.find((port) => port.id === route.stops[0]?.portId);
+    const toPort = galaxy.ports.find((port) => port.id === route.stops.at(-1)?.portId);
+    if (!shipType || !fromPort || !toPort) return atBase("grounded", "航线数据异常", route.name);
+    const fromSystem = systemsById.get(fromPort.systemId)!;
+    const toSystem = systemsById.get(toPort.systemId)!;
+    let pathSystems: StarSystem[];
+    let distances: number[];
+    if (route.routingMode === "warp") {
+      pathSystems = [fromSystem, toSystem];
+      const leg = worldLegs.find((candidate) =>
+        candidate.mode === "warp" &&
+        ((candidate.fromPortId === fromPort.id && candidate.toPortId === toPort.id) ||
+          (candidate.fromPortId === toPort.id && candidate.toPortId === fromPort.id)),
+      );
+      distances = [leg?.distance ?? 5];
+    } else {
+      const lanes = hyperspacePath(galaxy, fromSystem.id, toSystem.id);
+      const systemIds = orientedSystemPath(lanes, fromSystem.id);
+      pathSystems = systemIds.map((id) => systemsById.get(id)!).filter(Boolean);
+      distances = lanes.map((lane) => lane.distance);
+    }
+    const speed = shipType.speedByMode[route.routingMode ?? "hyperspace"] ?? 1;
+    const durations = distances.map((distance) => (distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY)) * 24);
+    const travelHours = durations.reduce((sum, duration) => sum + duration, 0);
+    if (travelHours <= 0 || pathSystems.length < 2) return atBase("grounded", "没有可用航路", route.name);
+    const cycleHours = travelHours * 2 + 48;
+    const phase = ((game.day - 1) * 24) % cycleHours;
+    if (phase < travelHours) {
+      const position = positionAlongPath(pathSystems, durations, phase);
+      return { id: ship.id, name: ship.name, x: position.x, y: position.y, state: "traveling", status: `去程航行 · ${Math.round((phase / travelHours) * 100)}%`, routeName: route.name };
+    }
+    if (phase < travelHours + 24) {
+      return { id: ship.id, name: ship.name, x: toSystem.x * 10, y: toSystem.y * 7 + 10, state: "docked", status: `${toPort.name} 停靠`, routeName: route.name };
+    }
+    if (phase < travelHours * 2 + 24) {
+      const returnElapsed = phase - travelHours - 24;
+      const position = positionAlongPath([...pathSystems].reverse(), [...durations].reverse(), returnElapsed);
+      return { id: ship.id, name: ship.name, x: position.x, y: position.y, state: "traveling", status: `返程航行 · ${Math.round((returnElapsed / travelHours) * 100)}%`, routeName: route.name };
+    }
+    return atBase("docked", `${basePort.name} 停靠`, route.name);
+  });
+}
+
 function clampCamera(camera: Camera): Camera {
   const viewWidth = MAP_WIDTH / camera.zoom;
   const viewHeight = MAP_HEIGHT / camera.zoom;
@@ -54,7 +213,9 @@ function clampCamera(camera: Camera): Camera {
 
 export function GalaxyMap({
   galaxy,
-  playerRoutes = [],
+  game,
+  shipTypes,
+  basePortId,
   selectedPortId,
   onSelectPort,
 }: GalaxyMapProps) {
@@ -75,6 +236,11 @@ export function GalaxyMap({
       opacity: 0.16 + random.next() * 0.55,
     }));
   }, [galaxy.config.seed]);
+  const playerRoutes = game.routes;
+  const shipVisuals = useMemo(
+    () => buildShipVisuals(galaxy, game, shipTypes),
+    [galaxy, game, shipTypes],
+  );
 
   useEffect(() => {
     setCamera({ centerX: 500, centerY: 350, zoom: 1 });
@@ -200,24 +366,28 @@ export function GalaxyMap({
           </g>
 
           <g className="player-route-lines" pointerEvents="none">
-            {playerRoutes.filter((route) => route.active).map((route) => {
+            {playerRoutes.filter((route) => route.active).flatMap((route) => {
               const fromPort = galaxy.ports.find((port) => port.id === route.stops[0]?.portId);
               const toPort = galaxy.ports.find((port) => port.id === route.stops.at(-1)?.portId);
               const from = fromPort ? systemsById.get(fromPort.systemId) : undefined;
               const to = toPort ? systemsById.get(toPort.systemId) : undefined;
               if (!from || !to) return null;
-              return (
-                <line
-                  key={route.id}
-                  className="player-route-line"
-                  x1={from.x * 10}
-                  y1={from.y * 7}
-                  x2={to.x * 10}
-                  y2={to.y * 7}
-                >
-                  <title>{route.name}</title>
-                </line>
-              );
+              if (route.routingMode === "warp") {
+                return [(
+                  <line key={route.id} className="player-route-line player-warp-route" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7}>
+                    <title>{route.name} · 曲率直达</title>
+                  </line>
+                )];
+              }
+              return hyperspacePath(galaxy, from.id, to.id).map((lane, index) => {
+                const segmentFrom = systemsById.get(lane.fromSystemId)!;
+                const segmentTo = systemsById.get(lane.toSystemId)!;
+                return (
+                  <line key={`${route.id}-${index}`} className="player-route-line player-hyper-route" x1={segmentFrom.x * 10} y1={segmentFrom.y * 7} x2={segmentTo.x * 10} y2={segmentTo.y * 7}>
+                    <title>{route.name} · 超空间航路</title>
+                  </line>
+                );
+              });
             })}
           </g>
 
@@ -233,7 +403,7 @@ export function GalaxyMap({
                 className={`system-node ${system.inhabited ? "inhabited-system" : "uninhabited-system"}`}
               >
                 <title>{system.inhabited ? `${system.name}，有人居住` : `${system.name}，无人居住`}</title>
-                <circle className="system-status-aura" cx={x} cy={y} r="24" />
+                <circle className={system.hubPortId === basePortId ? "system-status-aura company-base" : "system-status-aura"} cx={x} cy={y} r="24" />
                 <circle
                   className="system-hit-target"
                   cx={x} cy={y} r="13"
@@ -283,11 +453,28 @@ export function GalaxyMap({
               </g>
             );
           })}
+          <g className="live-ship-markers" pointerEvents="none">
+            {shipVisuals.map((ship) => (
+              <g key={ship.id} className={`live-ship-marker ${ship.state}`} transform={`translate(${ship.x} ${ship.y})`}>
+                <circle r="8" />
+                <path d="M 0 -6 L 5 5 L 0 2 L -5 5 Z" />
+                <text x="11" y="3">{ship.name}</text>
+                <title>{ship.name} · {ship.status}{ship.routeName ? ` · ${ship.routeName}` : ""}</title>
+              </g>
+            ))}
+          </g>
         </svg>
+        <div className="ship-live-board">
+          <strong>舰队实时状态</strong>
+          {shipVisuals.map((ship) => (
+            <div key={ship.id}><i className={ship.state} /><span>{ship.name}</span><em>{ship.status}</em></div>
+          ))}
+        </div>
         <div className="map-legend">
           <span><i className="legend-line hyper" />超空间</span>
           <span><i className="legend-line warp" />曲速直达</span>
           <span><i className="legend-line player" />玩家航线</span>
+          <span><i className="legend-dot base" />公司基地</span>
           <span><i className="legend-dot inhabited" />有人行星系</span>
           <span><i className="legend-dot uninhabited" />无人行星系</span>
         </div>

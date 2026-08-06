@@ -1,4 +1,4 @@
-import { DEFAULT_DEMAND_PARAMETERS } from "./parameters.js";
+import { DEFAULT_DEMAND_PARAMETERS, PASSENGER_SATISFACTION_WEIGHTS } from "./parameters.js";
 import {
   PASSENGER_CLASSES,
   type PassengerClass,
@@ -14,6 +14,38 @@ import {
 export interface BuildRouteServicesOptions {
   companyReputation?: number;
   onTimeRate?: number;
+  shipCondition?: number;
+}
+
+export const MAX_INTERSTELLAR_SPEED_LY_PER_DAY = 5;
+
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+export function passengerSatisfactionByClass(
+  distance: number,
+  inVehicleHours: number,
+  comfort: number,
+  onTimeRate: number,
+  condition: number,
+): Record<PassengerClass, number> {
+  const speedLyPerDay = distance / Math.max(1 / 24, inVehicleHours / 24);
+  const factors = {
+    speed: clampScore((speedLyPerDay / 5) * 100),
+    comfort: clampScore(comfort),
+    reliability: clampScore(onTimeRate * 100),
+    condition: clampScore(condition),
+  };
+  return Object.fromEntries(PASSENGER_CLASSES.map((passengerClass) => {
+    const weights = PASSENGER_SATISFACTION_WEIGHTS[passengerClass];
+    const score =
+      factors.speed * weights.speed +
+      factors.comfort * weights.comfort +
+      factors.reliability * weights.reliability +
+      factors.condition * weights.condition;
+    return [passengerClass, Number(score.toFixed(1))];
+  })) as Record<PassengerClass, number>;
 }
 
 interface ExpandedStop extends RouteStop {
@@ -50,11 +82,13 @@ function findLegPath(
   toPortId: string,
   worldLegs: readonly WorldLeg[],
   ship: ShipType,
+  routingMode?: Extract<TravelMode, "warp" | "hyperspace">,
 ): WorldLeg[] | undefined {
   const usableLegs = worldLegs.filter((leg) => {
     const maximumRange = ship.maxRangeByMode[leg.mode];
     return (
       leg.isOpen &&
+      (routingMode === undefined || leg.mode === routingMode) &&
       ship.supportedModes.includes(leg.mode) &&
       maximumRange !== undefined &&
       leg.distance <= maximumRange
@@ -89,7 +123,7 @@ function findLegPath(
             : undefined;
       if (!neighbor || !unvisited.has(neighbor)) continue;
       const speed = modeValue(ship.speedByMode, leg.mode, "Speed");
-      const candidate = currentDistance + (leg.distance / speed) * leg.timeModifier;
+      const candidate = currentDistance + (leg.distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY)) * leg.timeModifier;
       if (candidate < (distances.get(neighbor) ?? Number.POSITIVE_INFINITY)) {
         distances.set(neighbor, candidate);
         previous.set(neighbor, { nodeId: current, leg: orientLeg(leg, current) });
@@ -162,15 +196,16 @@ export function buildRouteServices(
   for (let index = 0; index < expandedStops.length - 1; index += 1) {
     const from = expandedStops[index]!;
     const to = expandedStops[index + 1]!;
-    const legs = findLegPath(from.portId, to.portId, worldLegs, ship);
+    const legs = findLegPath(from.portId, to.portId, worldLegs, ship, route.routingMode);
     if (!legs) {
       throw new Error(`${ship.name} cannot find an open path from ${from.portId} to ${to.portId}`);
     }
     const travelHours = legs.reduce((sum, leg) => {
       const speed = modeValue(ship.speedByMode, leg.mode, "Speed");
-      return sum + (leg.distance / speed) * leg.timeModifier;
+      return sum + (leg.distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY)) * 24 * leg.timeModifier;
     }, 0);
-    const stopHours = Math.max(to.minimumStopHours, ship.turnaroundHours);
+    // A commercial call includes local sublight approach, ground handling and departure.
+    const stopHours = Math.max(24, to.minimumStopHours, ship.turnaroundHours);
     const fromPort = portsById.get(from.portId)!;
     const toPort = portsById.get(to.portId)!;
     const fuelCost = legs.reduce((sum, leg) => {
@@ -225,6 +260,7 @@ export function buildRouteServices(
       ]),
     ) as Record<PassengerClass, number>;
 
+    const onTimeRate = Math.min(0.999, options.onTimeRate ?? ship.reliability);
     services.push({
       id: `${route.id}:${groupStart}-${index}`,
       routeId: route.id,
@@ -241,7 +277,14 @@ export function buildRouteServices(
       fareByClass,
       comfort: ship.comfort,
       reputation: options.companyReputation ?? 60,
-      onTimeRate: Math.min(0.999, options.onTimeRate ?? ship.reliability),
+      onTimeRate,
+      satisfactionByClass: passengerSatisfactionByClass(
+        distance,
+        inVehicleHours,
+        ship.comfort,
+        onTimeRate,
+        options.shipCondition ?? 100,
+      ),
       dailyOperatingCost: (departuresPerWeek * operatingCostPerDeparture) / 7,
     });
     groupStart = index + 1;

@@ -15,10 +15,16 @@ import {
   generateMarketDemands,
   marketEventDemandMultiplier,
   generateGalaxy,
+  gameWorldLegs,
+  fuelPriceRecord,
+  performShipMaintenance,
+  passengerSatisfactionByClass,
   PROOF_OF_CONCEPT_SCENARIO,
   simulateCampaign,
   shortestReferenceTime,
   simulateDay,
+  shipMaintenanceState,
+  setAutoMaintenanceThreshold,
   advanceGameDay,
   closePlayerRoute,
   type MarketDemand,
@@ -61,6 +67,7 @@ function service(overrides: Partial<ServiceLeg> & Pick<ServiceLeg, "id" | "fromP
     comfort: overrides.comfort ?? 70,
     reputation: overrides.reputation ?? 70,
     onTimeRate: overrides.onTimeRate ?? 0.95,
+    satisfactionByClass: overrides.satisfactionByClass ?? { economy: 75, business: 75, premium: 75 },
     dailyOperatingCost: overrides.dailyOperatingCost ?? 2_000,
   };
 }
@@ -294,8 +301,8 @@ test("概念验证版世界航段可双向用于理论旅行时间", () => {
     isOpen: true,
   };
 
-  assert.equal(shortestReferenceTime("a", "b", [leg]), 5);
-  assert.equal(shortestReferenceTime("b", "a", [leg]), 5);
+  assert.equal(shortestReferenceTime("a", "b", [leg]), 216);
+  assert.equal(shortestReferenceTime("b", "a", [leg]), 216);
 });
 
 test("事件只在开始后生效，并在恢复期平滑消退", () => {
@@ -384,6 +391,10 @@ test("随机银河严格遵守数量配置并可由种子复现", () => {
   assert.ok(first.worldLegs.every(
     (leg) => navigationNodeIds.has(leg.fromPortId) && navigationNodeIds.has(leg.toPortId),
   ));
+  const averageHyperspaceDistance = first.systemLanes
+    .filter((lane) => lane.mode === "hyperspace")
+    .reduce((sum, lane, _index, lanes) => sum + lane.distance / lanes.length, 0);
+  assert.ok(averageHyperspaceDistance >= 8 && averageHyperspaceDistance <= 13);
   let ringedPlanetCount = 0;
   for (const system of first.systems) {
     const details = first.systemDetails[system.id]!;
@@ -561,7 +572,8 @@ test("生成场景中的初始航线均有效并可完成日结算", () => {
 
 test("可玩状态支持购船、开线、日结算和关闭航线的完整循环", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
-  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy);
+  const base = generated.galaxy.ports[0]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
   const initialCash = game.cash;
   assert.equal(game.fleet.length, 1);
   assert.equal(game.routes.length, 0);
@@ -573,7 +585,7 @@ test("可玩状态支持购船、开线、日结算和关闭航线的完整循�
   assert.equal(game.cash, initialCash - yacht.purchasePrice);
 
   // Restore the affordable starter state and assign its free Meridian liner.
-  game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy);
+  game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
   const origin = generated.galaxy.ports[0]!;
   const destination = generated.galaxy.ports[1]!;
   const opened = createPlayerRoute(
@@ -584,9 +596,9 @@ test("可玩状态支持购船、开线、日结算和关闭航线的完整循�
       destinationPortId: destination.id,
       shipId: game.fleet[0]!.id,
       fareMultiplier: 1,
+      routingMode: "hyperspace",
     },
-    generated.scenario.ports,
-    generated.scenario.worldLegs,
+    generated.galaxy,
     generated.scenario.shipTypes,
   );
   game = opened.state;
@@ -614,7 +626,7 @@ test("玩家航线可沿连通网络跨越无人行星系", () => {
     starportCount: 3,
     laneDensity: 0,
   });
-  let game = createNewGame(generated.galaxy.config, generated.galaxy);
+  let game = createNewGame(generated.galaxy.config, generated.galaxy, generated.galaxy.ports[0]!.id);
   const [origin, destination] = generated.galaxy.ports;
   assert.ok(origin && destination);
   game = createPlayerRoute(
@@ -625,9 +637,9 @@ test("玩家航线可沿连通网络跨越无人行星系", () => {
       destinationPortId: destination.id,
       shipId: game.fleet[0]!.id,
       fareMultiplier: 1,
+      routingMode: "hyperspace",
     },
-    generated.scenario.ports,
-    generated.scenario.worldLegs,
+    generated.galaxy,
     generated.scenario.shipTypes,
   ).state;
   assert.equal(game.routes.length, 1);
@@ -643,28 +655,194 @@ test("随机可玩场景包含确定性的预告事件", () => {
   assert.ok(first.every((event) => event.affectedPortIds.length > 0));
 });
 
-test("默认星域存在可在期限内达成目标的经营策略", () => {
+test("选择的基地会约束所有玩家航线起点", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
-  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy);
-  const origin = generated.galaxy.ports.find((port) => port.name === "Nadir Vale Hub")!;
-  const destination = generated.galaxy.ports.find((port) => port.name === "Orion Crossing Hub")!;
+  const base = generated.galaxy.ports[2]!;
+  const wrongOrigin = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  const game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  assert.equal(game.basePortId, base.id);
+  assert.throws(() => createPlayerRoute(
+    game,
+    {
+      name: "Invalid Origin",
+      originPortId: wrongOrigin.id,
+      destinationPortId: destination.id,
+      shipId: game.fleet[0]!.id,
+      fareMultiplier: 1,
+      routingMode: "hyperspace",
+    },
+    generated.galaxy,
+    generated.scenario.shipTypes,
+  ), /基地/);
+});
+
+test("发动机类型约束超空间与曲率航路", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  assert.throws(() => createPlayerRoute(
+    game,
+    {
+      name: "Unsupported Warp",
+      originPortId: base.id,
+      destinationPortId: destination.id,
+      shipId: game.fleet[0]!.id,
+      fareMultiplier: 1,
+      routingMode: "warp",
+    },
+    generated.galaxy,
+    generated.scenario.shipTypes,
+  ), /曲率引擎/);
+
+  game = buyShip(game, "arrow-express", generated.scenario.shipTypes).state;
+  const arrow = game.fleet.find((ship) => ship.shipTypeId === "arrow-express")!;
+  game = createPlayerRoute(
+    game,
+    {
+      name: "Direct Warp",
+      originPortId: base.id,
+      destinationPortId: destination.id,
+      shipId: arrow.id,
+      fareMultiplier: 1,
+      routingMode: "warp",
+    },
+    generated.galaxy,
+    generated.scenario.shipTypes,
+  ).state;
+  const arrowType = generated.scenario.shipTypes.find((ship) => ship.id === "arrow-express")!;
+  const services = buildRouteServices(game.routes[0]!, arrowType, generated.galaxy.ports, gameWorldLegs(generated.galaxy));
+  assert.ok(services.every((service) => service.modePath.every((mode) => mode === "warp")));
+  assert.ok(services[0]!.destinationDwellHours >= 24);
+  assert.ok(services[0]!.departuresPerWeek < 7);
+});
+
+test("五光年航段至少需要一天且船况不会改变速度", () => {
+  const ports: Starport[] = ["a", "b"].map((id) => ({
+    id, systemId: id, name: id, population: 50, economy: 50, business: 50,
+    tourism: 50, administration: 50, portLevel: 4, dailyCapacity: 1_000,
+    fuelPrice: 2, serviceFee: 100,
+  }));
+  const leg: WorldLeg = {
+    id: "five-light-years", fromPortId: "a", toPortId: "b", mode: "hyperspace",
+    distance: 5, hazard: 0, timeModifier: 1, fuelModifier: 1, isOpen: true,
+  };
+  const ship = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "celestial-yacht")!;
+  const route: Route = {
+    id: "minimum-time", companyId: "player", name: "Minimum Time", kind: "return",
+    routingMode: "hyperspace",
+    stops: ports.map((port) => ({ portId: port.id, stopType: "commercial" as const, minimumStopHours: 24 })),
+    shipTypeId: ship.id, assignedShips: 1,
+    pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1.35, premium: 2.1 } },
+    maintenanceAllowanceHours: 0, active: true,
+  };
+  const pristine = buildRouteServices(route, ship, ports, [leg], { shipCondition: 100 });
+  const worn = buildRouteServices(route, ship, ports, [leg], { shipCondition: 35 });
+  assert.equal(pristine[0]!.inVehicleHours, 24);
+  assert.equal(worn[0]!.inVehicleHours, pristine[0]!.inVehicleHours);
+  assert.ok(worn[0]!.satisfactionByClass.premium < pristine[0]!.satisfactionByClass.premium);
+});
+
+test("不同旅客类型具有不同的速度与舒适度满意偏好", () => {
+  const fastBasic = passengerSatisfactionByClass(50, 240, 45, 0.98, 90);
+  const slowLuxury = passengerSatisfactionByClass(50, 480, 100, 0.98, 90);
+  assert.ok(fastBasic.business > slowLuxury.business);
+  assert.ok(slowLuxury.premium > fastBasic.premium);
+});
+
+test("船只累计损耗、强制停航并可完成定期维护", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[3]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  game = setAutoMaintenanceThreshold(game, 30).state;
+  game = createPlayerRoute(
+    game,
+    {
+      name: "Maintenance Run",
+      originPortId: base.id,
+      destinationPortId: destination.id,
+      shipId: game.fleet[0]!.id,
+      fareMultiplier: 1,
+      routingMode: "hyperspace",
+    },
+    generated.galaxy,
+    generated.scenario.shipTypes,
+  ).state;
+  while (shipMaintenanceState(game.fleet[0]!, game.day) === "ready") {
+    game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  }
+  assert.ok(game.fleet[0]!.condition < 100);
+  assert.ok(game.fleet[0]!.flightHoursSinceMaintenance > 0);
+  const maintenance = performShipMaintenance(game, game.fleet[0]!.id, generated.scenario.shipTypes);
+  game = maintenance.state;
+  assert.equal(shipMaintenanceState(game.fleet[0]!, game.day), "maintenance");
+  const recoveryDay = game.fleet[0]!.maintenanceUntilDay!;
+  while (game.day < recoveryDay) game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  assert.equal(shipMaintenanceState(game.fleet[0]!, game.day), "ready");
+  assert.equal(game.fleet[0]!.condition, 100);
+});
+
+test("船只到达玩家设定阈值后自动维修", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  game = setAutoMaintenanceThreshold(game, 95).state;
+  game = createPlayerRoute(game, {
+    name: "Automatic Maintenance", originPortId: base.id, destinationPortId: destination.id,
+    shipId: game.fleet[0]!.id, fareMultiplier: 1, routingMode: "hyperspace",
+  }, generated.galaxy, generated.scenario.shipTypes).state;
+  for (let index = 0; index < 12 && shipMaintenanceState(game.fleet[0]!, game.day) !== "maintenance"; index += 1) {
+    game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  }
+  assert.equal(shipMaintenanceState(game.fleet[0]!, game.day), "maintenance");
+  assert.equal(game.fleet[0]!.condition, 100);
+});
+
+test("燃料市场价格逐日变化并保留历史", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, generated.galaxy.ports[0]!.id);
+  const first = fuelPriceRecord(generated.galaxy, 1);
+  for (let day = 0; day < 8; day += 1) {
+    game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  }
+  assert.equal(game.fuelMarket.length, 9);
+  const portId = generated.galaxy.ports[0]!.id;
+  assert.notEqual(game.fuelMarket.at(-1)!.prices[portId], first.prices[portId]);
+});
+
+test("完成初级目标后仍可继续经营", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const base = generated.galaxy.ports.find((port) => port.name === "Orion Crossing Hub")!;
+  const destination = generated.galaxy.ports.find((port) => port.name === "Cygnus Crown Hub")!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
   game = createPlayerRoute(
     game,
     {
       name: "Profitable Corridor",
-      originPortId: origin.id,
+      originPortId: base.id,
       destinationPortId: destination.id,
       shipId: game.fleet[0]!.id,
       fareMultiplier: 1,
+      routingMode: "hyperspace",
     },
-    generated.scenario.ports,
-    generated.scenario.worldLegs,
+    generated.galaxy,
     generated.scenario.shipTypes,
   ).state;
 
-  while (game.status === "playing") {
+  while (game.primaryGoalCompletedOnDay === null && game.status === "playing") {
+    const maintenance = shipMaintenanceState(game.fleet[0]!, game.day);
+    if (maintenance === "due" || maintenance === "required") {
+      game = performShipMaintenance(game, game.fleet[0]!.id, generated.scenario.shipTypes).state;
+    }
     game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
   }
-  assert.equal(game.status, "won");
-  assert.ok(game.day <= 121);
+  assert.equal(game.status, "playing");
+  assert.ok(game.primaryGoalCompletedOnDay !== null);
+  const completedOnDay = game.primaryGoalCompletedOnDay;
+  game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  assert.equal(game.status, "playing");
+  assert.equal(game.primaryGoalCompletedOnDay, completedOnDay);
 });
