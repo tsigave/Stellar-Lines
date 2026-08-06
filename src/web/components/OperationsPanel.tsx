@@ -204,7 +204,7 @@ export function OperationsPanel({
             <option key={threshold} value={threshold}>{threshold}% · {threshold >= 90 ? "预防性" : threshold >= 70 ? "标准" : "节约"}</option>
           ))}
         </select>
-        <small>船只返抵主基地时若维护值低于阈值，系统会自动扣款并安排 3 日维护。</small>
+        <small>标准维护周期约 3,200 飞行小时（高利用率下约半年）；返抵主基地且低于阈值时自动安排 3 日维护。</small>
       </div>
       <div className="owned-fleet">
         {game.fleet.map((ship) => {

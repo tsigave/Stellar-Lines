@@ -24,8 +24,12 @@ export const PASSENGER_GOAL = 4_000;
 export const DEADLINE_DAY = 121;
 export const MAINTENANCE_DUE_CONDITION = 40;
 export const MAINTENANCE_REQUIRED_CONDITION = 20;
-export const MAINTENANCE_DUE_HOURS = 120;
-export const MAINTENANCE_REQUIRED_HOURS = 160;
+// 3,200 flight hours is roughly six calendar months for a highly utilized liner.
+// Condition wear is aligned with the same interval so an 80% preventive policy
+// no longer sends a healthy ship to maintenance every few weeks.
+export const MAINTENANCE_DUE_HOURS = 3_200;
+export const MAINTENANCE_REQUIRED_HOURS = 4_200;
+export const CONDITION_WEAR_PER_FLIGHT_HOUR = 0.00625;
 export const MAINTENANCE_DAYS = 3;
 export const DEFAULT_AUTO_MAINTENANCE_THRESHOLD = 80;
 
@@ -637,7 +641,7 @@ function ageFleetAfterDay(
     const flightHours = routeSchedule(route, scenario).dailyFlightHours;
     return {
       ...ship,
-      condition: Math.max(0, ship.condition - flightHours * 0.16),
+      condition: Math.max(0, ship.condition - flightHours * CONDITION_WEAR_PER_FLIGHT_HOUR),
       flightHoursSinceMaintenance: ship.flightHoursSinceMaintenance + flightHours,
     };
   });

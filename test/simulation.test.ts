@@ -24,6 +24,8 @@ import {
   shortestReferenceTime,
   simulateDay,
   shipMaintenanceState,
+  MAINTENANCE_DUE_HOURS,
+  MAINTENANCE_REQUIRED_HOURS,
   setAutoMaintenanceThreshold,
   advanceGameDay,
   closePlayerRoute,
@@ -784,6 +786,23 @@ test("船只累计损耗、强制停航并可完成定期维护", () => {
   assert.equal(game.fleet[0]!.condition, 100);
 });
 
+test("定期维护周期按高利用率下约半年校准", () => {
+  assert.equal(MAINTENANCE_DUE_HOURS, 3_200);
+  assert.equal(MAINTENANCE_REQUIRED_HOURS, 4_200);
+  const ship = {
+    id: "long-cycle",
+    name: "Long Cycle",
+    shipTypeId: "meridian-liner",
+    routeId: null,
+    condition: 100,
+    flightHoursSinceMaintenance: MAINTENANCE_DUE_HOURS - 1,
+    maintenanceUntilDay: null,
+  };
+  assert.equal(shipMaintenanceState(ship, 180), "ready");
+  assert.equal(shipMaintenanceState({ ...ship, flightHoursSinceMaintenance: MAINTENANCE_DUE_HOURS }, 180), "due");
+  assert.equal(shipMaintenanceState({ ...ship, flightHoursSinceMaintenance: MAINTENANCE_REQUIRED_HOURS }, 180), "required");
+});
+
 test("船只到达玩家设定阈值后自动维修", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
   const base = generated.galaxy.ports[0]!;
@@ -794,9 +813,11 @@ test("船只到达玩家设定阈值后自动维修", () => {
     name: "Automatic Maintenance", originPortId: base.id, destinationPortId: destination.id,
     shipId: game.fleet[0]!.id, fareMultiplier: 1, routingMode: "hyperspace",
   }, generated.galaxy, generated.scenario.shipTypes).state;
-  while (game.fleet[0]!.condition > 95) {
-    game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
-  }
+  game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  game = {
+    ...game,
+    fleet: game.fleet.map((ship) => ship.id === game.fleet[0]!.id ? { ...ship, condition: 94 } : ship),
+  };
   assert.notEqual(shipMaintenanceState(game.fleet[0]!, game.day), "maintenance");
   const belowThresholdDay = game.day;
   for (let index = 0; index < 12 && shipMaintenanceState(game.fleet[0]!, game.day) !== "maintenance"; index += 1) {
