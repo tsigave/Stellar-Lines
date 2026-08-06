@@ -7,6 +7,7 @@ export * from "./graph.js";
 export * from "./game.js";
 export * from "./generation/galaxy.js";
 export * from "./generation/random.js";
+export * from "./generation/system-names.js";
 export * from "./journeys.js";
 export * from "./parameters.js";
 export * from "./routes.js";

@@ -17,17 +17,10 @@ import type {
   WorldLeg,
 } from "../types.js";
 import { createRandom, type RandomSource } from "./random.js";
+import { CHINESE_SYSTEM_NAMES } from "./system-names.js";
 
-const NAME_PREFIXES = [
-  "Astra", "Caelum", "Cygnus", "Eos", "Helion", "Kepler", "Lyra", "Nadir",
-  "Nova", "Orion", "Pavo", "Rigel", "Solis", "Taranis", "Vesper", "Zenith",
-];
-const NAME_SUFFIXES = [
-  "Prime", "Reach", "Haven", "Crossing", "Drift", "Crown", "Vale", "Gate",
-  "March", "Terminus", "Arc", "Bastion", "Fields", "Expanse", "Junction", "Rise",
-];
 const PORT_KINDS = [
-  "Central", "Orbital", "Freeport", "Terminal", "Station", "Exchange", "Landing", "Harbor",
+  "中央港", "轨道港", "自由港", "终点站", "空间站", "交易站", "登陆场", "星港",
 ];
 const SPECTRAL_CLASSES: readonly StarSystem["spectralClass"][] = [
   "B", "A", "F", "G", "G", "K", "K", "M", "M", "M",
@@ -281,10 +274,10 @@ function generateHyperspacePairs(
 }
 
 function uniqueSystemNames(count: number, random: RandomSource): string[] {
-  const combinations = NAME_PREFIXES.flatMap((prefix) =>
-    NAME_SUFFIXES.map((suffix) => `${prefix} ${suffix}`),
-  );
-  return random.shuffle(combinations).slice(0, count);
+  if (count > CHINESE_SYSTEM_NAMES.length) {
+    throw new Error(`System count exceeds the ${CHINESE_SYSTEM_NAMES.length}-name pool`);
+  }
+  return random.shuffle(CHINESE_SYSTEM_NAMES).slice(0, count);
 }
 
 function createPort(
@@ -302,8 +295,8 @@ function createPort(
     id: `${system.id}-port-${index + 1}`,
     systemId: system.id,
     name: isHub
-      ? `${system.name} Hub`
-      : `${system.name} ${random.pick(PORT_KINDS)} ${String.fromCharCode(64 + index)}`,
+      ? `${system.name}枢纽港`
+      : `${system.name}${random.pick(PORT_KINDS)}${String.fromCharCode(64 + index)}`,
     population,
     economy,
     business,

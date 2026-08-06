@@ -9,6 +9,7 @@ import {
   createGeneratedScenario,
   createNewGame,
   createPlayerRoute,
+  CHINESE_SYSTEM_NAMES,
   DEFAULT_GALAXY_CONFIG,
   deterministicVariation,
   eventIntensity,
@@ -39,6 +40,12 @@ import {
   type Starport,
   type WorldLeg,
 } from "../src/index.js";
+
+test("中文行星系名称库包含 500 个不重复名称", () => {
+  assert.equal(CHINESE_SYSTEM_NAMES.length, 500);
+  assert.equal(new Set(CHINESE_SYSTEM_NAMES).size, 500);
+  assert.ok(CHINESE_SYSTEM_NAMES.every((name) => /^[\p{Script=Han}]+$/u.test(name)));
+});
 
 function market(passengerClass: PassengerClass, potentialPassengers = 1_000): MarketDemand {
   return {
@@ -390,6 +397,10 @@ test("随机银河严格遵守数量配置并可由种子复现", () => {
   assert.equal(first.systems.length, 12);
   assert.equal(first.ports.length, 8);
   assert.deepEqual(first, second);
+  const availableSystemNames = new Set<string>(CHINESE_SYSTEM_NAMES);
+  assert.ok(first.systems.every((system) => availableSystemNames.has(system.name)));
+  assert.equal(new Set(first.systems.map((system) => system.name)).size, first.systems.length);
+  assert.ok(first.ports.every((port) => port.name.endsWith("枢纽港")));
   assert.ok(first.systems.some((system) => system.inhabited));
   assert.ok(first.systems.some((system) => !system.inhabited));
   const navigationNodeIds = new Set(first.systems.map((system) => system.navigationNodeId));
@@ -886,8 +897,9 @@ test("燃料市场价格逐日变化并保留历史", () => {
 
 test("完成初级目标后仍可继续经营", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
-  const base = generated.galaxy.ports.find((port) => port.name === "Orion Crossing Hub")!;
-  const destination = generated.galaxy.ports.find((port) => port.name === "Cygnus Crown Hub")!;
+  const [base, destination] = generated.galaxy.ports;
+  assert.ok(base);
+  assert.ok(destination);
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
   game = createPlayerRoute(
     game,
