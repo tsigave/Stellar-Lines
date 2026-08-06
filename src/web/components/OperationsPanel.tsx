@@ -46,7 +46,8 @@ export function OperationsPanel({
   const [destinationPortId, setDestinationPortId] = useState(
     galaxy.ports.find((port) => port.id !== game.basePortId)?.id ?? game.basePortId,
   );
-  const [shipId, setShipId] = useState("");
+  const [originPortId, setOriginPortId] = useState(game.basePortId);
+  const [selectedShipIds, setSelectedShipIds] = useState<string[]>([]);
   const [routeName, setRouteName] = useState("");
   const [fareMultiplier, setFareMultiplier] = useState(1);
   const [routingMode, setRoutingMode] = useState<PlayerRoutingMode>("hyperspace");
@@ -54,11 +55,22 @@ export function OperationsPanel({
     () => game.fleet.filter((ship) => ship.routeId === null && shipMaintenanceState(ship, game.day) !== "maintenance" && shipMaintenanceState(ship, game.day) !== "required"),
     [game.day, game.fleet],
   );
-  const selectedShip = availableShips.find((ship) => ship.id === shipId);
-  const selectedShipType = shipTypes.find((type) => type.id === selectedShip?.shipTypeId);
-  const availableModes = (["hyperspace", "warp"] as const).filter((mode) =>
-    selectedShipType?.supportedModes.includes(mode),
-  );
+  const availableModes = ["hyperspace", "warp"] as const;
+  const selectedShips = availableShips.filter((ship) => selectedShipIds.includes(ship.id));
+  const selectedShipTypes = selectedShips
+    .map((ship) => shipTypes.find((type) => type.id === ship.shipTypeId))
+    .filter((type): type is ShipType => !!type);
+  const selectedSpeed = selectedShipTypes[0]?.speedByMode[routingMode];
+  const modeCompatibleShips = availableShips.filter((ship) => {
+    const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
+    return !!type?.supportedModes.includes(routingMode);
+  });
+  const isShipCompatible = (shipId: string) => {
+    const ship = availableShips.find((candidate) => candidate.id === shipId);
+    const type = shipTypes.find((candidate) => candidate.id === ship?.shipTypeId);
+    return !!type && type.supportedModes.includes(routingMode) &&
+      (selectedSpeed === undefined || type.speedByMode[routingMode] === selectedSpeed);
+  };
 
   useEffect(() => {
     setDestinationPortId((current) => {
@@ -71,32 +83,31 @@ export function OperationsPanel({
   }, [galaxy.ports, game.basePortId, selectedPortId]);
 
   useEffect(() => {
-    if (!availableShips.some((ship) => ship.id === shipId)) {
-      setShipId(availableShips[0]?.id ?? "");
-    }
-  }, [availableShips, shipId]);
+    setOriginPortId(game.basePortId);
+  }, [game.basePortId]);
 
   useEffect(() => {
-    if (!availableModes.includes(routingMode)) {
-      setRoutingMode(availableModes[0] ?? "hyperspace");
-    }
-  }, [availableModes, routingMode]);
+    setSelectedShipIds((current) => current.filter((shipId) =>
+      availableShips.some((ship) => ship.id === shipId) && isShipCompatible(shipId),
+    ));
+  }, [availableShips, routingMode]);
 
   const preview = useMemo(() => {
-    if (!selectedShipType || !destinationPortId || !availableModes.includes(routingMode)) return null;
+    const selectedShipType = selectedShipTypes[0];
+    if (!selectedShipType || !destinationPortId || originPortId !== game.basePortId) return null;
     const route: Route = {
       id: "route-preview",
       companyId: "player",
       name: "航线预览",
       kind: "return",
       routingMode,
-      stops: [game.basePortId, destinationPortId].map((portId) => ({
+      stops: [originPortId, destinationPortId].map((portId) => ({
         portId,
         stopType: "commercial" as const,
         minimumStopHours: 24,
       })),
       shipTypeId: selectedShipType.id,
-      assignedShips: 1,
+      assignedShips: selectedShipIds.length,
       pricing: {
         multiplier: fareMultiplier,
         passengerClassMultiplier: { economy: 1, business: 1.35, premium: 2.1 },
@@ -110,7 +121,7 @@ export function OperationsPanel({
       return {
         error: null,
         departuresPerWeek,
-        roundTripDays: departuresPerWeek > 0 ? 7 * selectedShipType.operationalAvailability / departuresPerWeek : 0,
+        roundTripDays: departuresPerWeek > 0 ? 7 * selectedShipIds.length * selectedShipType.operationalAvailability / departuresPerWeek : 0,
         oneWayHours: services[0]?.inVehicleHours ?? 0,
       };
     } catch (caught) {
@@ -121,18 +132,24 @@ export function OperationsPanel({
         oneWayHours: 0,
       };
     }
-  }, [availableModes, destinationPortId, fareMultiplier, galaxy, game.basePortId, routingMode, selectedShipType]);
+  }, [destinationPortId, fareMultiplier, galaxy, game.basePortId, originPortId, routingMode, selectedShipIds.length, selectedShipTypes]);
 
   const submit = () => {
     onCreateRoute({
       name: routeName,
-      originPortId: game.basePortId,
+      originPortId,
       destinationPortId,
-      shipId,
+      shipIds: selectedShipIds,
       fareMultiplier,
       routingMode,
     });
     setRouteName("");
+    setSelectedShipIds([]);
+  };
+  const toggleShip = (shipId: string) => {
+    setSelectedShipIds((current) => current.includes(shipId)
+      ? current.filter((candidate) => candidate !== shipId)
+      : [...current, shipId]);
   };
   const basePort = galaxy.ports.find((port) => port.id === game.basePortId);
 
@@ -141,7 +158,7 @@ export function OperationsPanel({
       <div className="panel-heading">
         <span className="eyebrow">OPERATIONS DESK</span>
         <h2>航线与舰队</h2>
-        <p>点击地图选择目的地；所有航线从基地出发。</p>
+        <p>依次选择起终点、推进方式，再分配同速船只。</p>
       </div>
 
       <section className="objective-card">
@@ -151,31 +168,41 @@ export function OperationsPanel({
       </section>
 
       <div className="section-title">建立基地往返航线</div>
-      <div className="fixed-origin"><span>固定起点</span><strong>{basePort?.name}</strong></div>
+      <label className="field-label" htmlFor="route-origin">1 · 出发地</label>
+      <select id="route-origin" value={originPortId} onChange={(event) => setOriginPortId(event.target.value)}>
+        <option value={game.basePortId}>{basePort?.name} · 公司基地</option>
+      </select>
 
-      <label className="field-label" htmlFor="route-destination">目的地</label>
+      <label className="field-label" htmlFor="route-destination">2 · 目的地</label>
       <select id="route-destination" value={destinationPortId} onChange={(event) => setDestinationPortId(event.target.value)}>
         {galaxy.ports.filter((port) => port.id !== game.basePortId).map((port) => (
           <option key={port.id} value={port.id}>{port.name}</option>
         ))}
       </select>
 
-      <label className="field-label" htmlFor="route-ship">分配船只</label>
-      <select id="route-ship" value={shipId} onChange={(event) => setShipId(event.target.value)}>
-        {availableShips.length === 0 && <option value="">没有可用船只</option>}
-        {availableShips.map((ship) => {
-          const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
-          return <option key={ship.id} value={ship.id}>{ship.name} · {type?.seats ?? 0} 座</option>;
-        })}
-      </select>
-
-      <label className="field-label" htmlFor="route-mode">航路方式</label>
+      <label className="field-label" htmlFor="route-mode">3 · 出行方式</label>
       <select id="route-mode" value={routingMode} onChange={(event) => setRoutingMode(event.target.value as PlayerRoutingMode)}>
-        {availableModes.length === 0 && <option value="">所选船只没有可用星际引擎</option>}
         {availableModes.map((mode) => (
           <option key={mode} value={mode}>{mode === "hyperspace" ? "超空间航路 · 沿航道网络" : "曲率航路 · 点对点直达"}</option>
         ))}
       </select>
+
+      <div className="field-label route-fleet-label">4 · 分配船只 <span>{selectedShipIds.length} 艘</span></div>
+      <div className="route-fleet-picker">
+        {modeCompatibleShips.length === 0 && <p>没有配备该推进方式的可用船只。</p>}
+        {modeCompatibleShips.map((ship) => {
+          const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId)!;
+          const checked = selectedShipIds.includes(ship.id);
+          const compatible = checked || isShipCompatible(ship.id);
+          return (
+            <label className={compatible ? "" : "incompatible"} key={ship.id}>
+              <input type="checkbox" checked={checked} disabled={!compatible} onChange={() => toggleShip(ship.id)} />
+              <span><strong>{ship.name}</strong><small>{type.name} · {type.seats} 座 · {type.speedByMode[routingMode]} 光年/日</small></span>
+            </label>
+          );
+        })}
+      </div>
+      {selectedSpeed !== undefined && <div className="route-fleet-rule">本航线统一速度：{selectedSpeed} 光年/日；可继续选择相同推进方式与速度的船只。</div>}
 
       <label className="field-label" htmlFor="route-name">航线名称</label>
       <input id="route-name" value={routeName} placeholder="留空自动命名" onChange={(event) => setRouteName(event.target.value)} />
@@ -192,7 +219,7 @@ export function OperationsPanel({
       )}
       {preview?.error && <div className="route-preview-error">{preview.error}</div>}
 
-      <button className="primary-action" disabled={!shipId || !preview || !!preview.error || game.status !== "playing"} onClick={submit}>
+      <button className="primary-action" disabled={selectedShipIds.length === 0 || !preview || !!preview.error || game.status !== "playing"} onClick={submit}>
         <span>开通航线</span><small>{formatCredits(ROUTE_OPENING_COST)}</small>
       </button>
 

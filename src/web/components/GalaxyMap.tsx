@@ -182,7 +182,10 @@ function buildShipVisuals(
     const travelHours = durations.reduce((sum, duration) => sum + duration, 0);
     if (travelHours <= 0 || pathSystems.length < 2) return atBase("grounded", "没有可用航路", route.name);
     const cycleHours = travelHours * 2 + 48;
-    const phase = ((simulationDay - 1) * 24) % cycleHours;
+    const routeShips = game.fleet.filter((candidate) => candidate.routeId === route.id);
+    const routeShipIndex = Math.max(0, routeShips.findIndex((candidate) => candidate.id === ship.id));
+    const phaseOffset = (routeShipIndex * cycleHours) / Math.max(1, routeShips.length);
+    const phase = (((simulationDay - 1) * 24 + phaseOffset) % cycleHours + cycleHours) % cycleHours;
     if (phase < travelHours) {
       const position = positionAlongPath(pathSystems, durations, phase);
       return { id: ship.id, name: ship.name, x: position.x + offsetX, y: position.y + offsetY, state: "traveling", status: `去程航行 · ${Math.round((phase / travelHours) * 100)}%`, routeName: route.name };

@@ -229,6 +229,17 @@ input[type="range"] {
 }
 .fixed-origin span { color: var(--muted); font-size: 10px; }
 .fixed-origin strong { color: #d3e6e6; font-size: 12px; font-weight: 600; }
+.route-fleet-label { display: flex; justify-content: space-between; }
+.route-fleet-label span { color: var(--teal); }
+.route-fleet-picker { display: flex; flex-direction: column; gap: 4px; margin-bottom: 5px; }
+.route-fleet-picker > p { margin: 0; padding: 8px; color: var(--muted); font-size: 9px; border: 1px dashed rgba(110, 151, 160, 0.18); }
+.route-fleet-picker label { display: flex; gap: 7px; align-items: center; padding: 6px 7px; border: 1px solid rgba(110, 151, 160, 0.14); background: rgba(14, 30, 39, 0.32); cursor: pointer; }
+.route-fleet-picker label.incompatible { opacity: 0.38; cursor: not-allowed; }
+.route-fleet-picker input { width: auto; margin: 0; accent-color: var(--teal); }
+.route-fleet-picker span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.route-fleet-picker strong { color: #cfe7e6; font-size: 10px; font-weight: 600; }
+.route-fleet-picker small, .route-fleet-rule { color: #70858e; font-size: 8px; }
+.route-fleet-rule { margin-bottom: 8px; line-height: 1.45; }
 .route-preview {
   margin-top: 9px;
   display: grid;

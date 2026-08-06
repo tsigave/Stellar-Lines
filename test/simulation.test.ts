@@ -596,7 +596,7 @@ test("可玩状态支持购船、开线、日结算和关闭航线的完整循�
       name: "First Corridor",
       originPortId: origin.id,
       destinationPortId: destination.id,
-      shipId: game.fleet[0]!.id,
+      shipIds: [game.fleet[0]!.id],
       fareMultiplier: 1,
       routingMode: "hyperspace",
     },
@@ -637,7 +637,7 @@ test("玩家航线可沿连通网络跨越无人行星系", () => {
       name: "Deep Corridor",
       originPortId: origin.id,
       destinationPortId: destination.id,
-      shipId: game.fleet[0]!.id,
+      shipIds: [game.fleet[0]!.id],
       fareMultiplier: 1,
       routingMode: "hyperspace",
     },
@@ -670,7 +670,7 @@ test("选择的基地会约束所有玩家航线起点", () => {
       name: "Invalid Origin",
       originPortId: wrongOrigin.id,
       destinationPortId: destination.id,
-      shipId: game.fleet[0]!.id,
+      shipIds: [game.fleet[0]!.id],
       fareMultiplier: 1,
       routingMode: "hyperspace",
     },
@@ -690,7 +690,7 @@ test("发动机类型约束超空间与曲率航路", () => {
       name: "Unsupported Warp",
       originPortId: base.id,
       destinationPortId: destination.id,
-      shipId: game.fleet[0]!.id,
+      shipIds: [game.fleet[0]!.id],
       fareMultiplier: 1,
       routingMode: "warp",
     },
@@ -706,7 +706,7 @@ test("发动机类型约束超空间与曲率航路", () => {
       name: "Direct Warp",
       originPortId: base.id,
       destinationPortId: destination.id,
-      shipId: arrow.id,
+      shipIds: [arrow.id],
       fareMultiplier: 1,
       routingMode: "warp",
     },
@@ -718,6 +718,47 @@ test("发动机类型约束超空间与曲率航路", () => {
   assert.ok(services.every((service) => service.modePath.every((mode) => mode === "warp")));
   assert.ok(services[0]!.destinationDwellHours >= 24);
   assert.ok(services[0]!.departuresPerWeek < 7);
+});
+
+test("同速同推进方式的多艘船可共同增加航线班次", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  game = buyShip(game, "meridian-liner", generated.scenario.shipTypes).state;
+  const meridians = game.fleet.filter((ship) => ship.shipTypeId === "meridian-liner");
+  game = createPlayerRoute(game, {
+    name: "Two Ship Corridor",
+    originPortId: base.id,
+    destinationPortId: destination.id,
+    shipIds: meridians.map((ship) => ship.id),
+    fareMultiplier: 1,
+    routingMode: "hyperspace",
+  }, generated.galaxy, generated.scenario.shipTypes).state;
+  assert.equal(game.routes[0]!.assignedShips, 2);
+  assert.ok(meridians.every((ship) => game.fleet.find((candidate) => candidate.id === ship.id)?.routeId === game.routes[0]!.id));
+  const type = generated.scenario.shipTypes.find((ship) => ship.id === "meridian-liner")!;
+  const twoShipServices = buildRouteServices(game.routes[0]!, type, generated.galaxy.ports, gameWorldLegs(generated.galaxy));
+  const oneShipServices = buildRouteServices({ ...game.routes[0]!, assignedShips: 1 }, type, generated.galaxy.ports, gameWorldLegs(generated.galaxy));
+  assert.equal(twoShipServices[0]!.departuresPerWeek, oneShipServices[0]!.departuresPerWeek * 2);
+});
+
+test("同一航线拒绝速度不同的船只组合", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  game = buyShip(game, "pioneer-regional", generated.scenario.shipTypes).state;
+  game = buyShip(game, "arrow-express", generated.scenario.shipTypes).state;
+  const warpShips = game.fleet.filter((ship) => ship.shipTypeId === "pioneer-regional" || ship.shipTypeId === "arrow-express");
+  assert.throws(() => createPlayerRoute(game, {
+    name: "Mixed Speed",
+    originPortId: base.id,
+    destinationPortId: destination.id,
+    shipIds: warpShips.map((ship) => ship.id),
+    fareMultiplier: 1,
+    routingMode: "warp",
+  }, generated.galaxy, generated.scenario.shipTypes), /速度相同/);
 });
 
 test("五光年航段至少需要一天且船况不会改变速度", () => {
@@ -765,7 +806,7 @@ test("船只累计损耗、强制停航并可完成定期维护", () => {
       name: "Maintenance Run",
       originPortId: base.id,
       destinationPortId: destination.id,
-      shipId: game.fleet[0]!.id,
+      shipIds: [game.fleet[0]!.id],
       fareMultiplier: 1,
       routingMode: "hyperspace",
     },
@@ -811,7 +852,7 @@ test("船只到达玩家设定阈值后自动维修", () => {
   game = setAutoMaintenanceThreshold(game, 95).state;
   game = createPlayerRoute(game, {
     name: "Automatic Maintenance", originPortId: base.id, destinationPortId: destination.id,
-    shipId: game.fleet[0]!.id, fareMultiplier: 1, routingMode: "hyperspace",
+    shipIds: [game.fleet[0]!.id], fareMultiplier: 1, routingMode: "hyperspace",
   }, generated.galaxy, generated.scenario.shipTypes).state;
   game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
   game = {
@@ -851,7 +892,7 @@ test("完成初级目标后仍可继续经营", () => {
       name: "Profitable Corridor",
       originPortId: base.id,
       destinationPortId: destination.id,
-      shipId: game.fleet[0]!.id,
+      shipIds: [game.fleet[0]!.id],
       fareMultiplier: 1,
       routingMode: "hyperspace",
     },

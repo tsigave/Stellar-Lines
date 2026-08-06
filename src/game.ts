@@ -99,7 +99,7 @@ export interface CreateRouteInput {
   name: string;
   originPortId: string;
   destinationPortId: string;
-  shipId: string;
+  shipIds: readonly string[];
   fareMultiplier: number;
   routingMode: PlayerRoutingMode;
 }
@@ -253,14 +253,18 @@ export function shipMaintenanceCost(shipType: ShipType): number {
   return Math.max(15_000, Math.round(shipType.purchasePrice * 0.0125));
 }
 
-function shipForRoute(state: GameState, routeId: string): OwnedShip | undefined {
-  return state.fleet.find((ship) => ship.routeId === routeId);
+function shipsForRoute(state: GameState, routeId: string): OwnedShip[] {
+  return state.fleet.filter((ship) => ship.routeId === routeId);
 }
 
 function operationalPlayerRoutes(state: GameState): Route[] {
-  return state.routes.filter((route) => {
-    const ship = shipForRoute(state, route.id);
-    return route.active && !!ship && shipMaintenanceState(ship, state.day) !== "required" && shipMaintenanceState(ship, state.day) !== "maintenance";
+  return state.routes.flatMap((route) => {
+    if (!route.active) return [];
+    const availableShips = shipsForRoute(state, route.id).filter((ship) => {
+      const maintenance = shipMaintenanceState(ship, state.day);
+      return maintenance !== "required" && maintenance !== "maintenance";
+    });
+    return availableShips.length > 0 ? [{ ...route, assignedShips: availableShips.length }] : [];
   });
 }
 
@@ -333,9 +337,13 @@ export function gameScenario(
       ...baseScenario.routes.filter((route) => route.companyId !== "player"),
       ...operationalPlayerRoutes(state),
     ],
-    shipConditionByRoute: Object.fromEntries(
-      state.fleet.filter((ship) => ship.routeId).map((ship) => [ship.routeId!, ship.condition]),
-    ),
+    shipConditionByRoute: Object.fromEntries(state.routes.map((route) => {
+      const ships = shipsForRoute(state, route.id);
+      const averageCondition = ships.length > 0
+        ? ships.reduce((sum, ship) => sum + ship.condition, 0) / ships.length
+        : 100;
+      return [route.id, averageCondition];
+    })),
     events: createGeneratedGameEvents(galaxy),
   };
 }
@@ -393,16 +401,26 @@ export function createPlayerRoute(
   if (input.originPortId !== state.basePortId) throw new Error("所有玩家航线必须从公司基地出发");
   if (input.originPortId === input.destinationPortId) throw new Error("目的地不能是公司基地");
   if (state.cash < ROUTE_OPENING_COST) throw new Error("资金不足，无法支付航线开办费");
-  const ship = state.fleet.find((candidate) => candidate.id === input.shipId);
-  if (!ship || ship.routeId) throw new Error("请选择一艘可用船只");
-  if (shipMaintenanceState(ship, state.day) !== "ready" && shipMaintenanceState(ship, state.day) !== "due") {
-    throw new Error("该船正在维护或已被强制停航");
+  const selectedShipIds = [...new Set(input.shipIds)];
+  if (selectedShipIds.length === 0) throw new Error("请至少选择一艘可用船只");
+  const ships = selectedShipIds.map((shipId) => state.fleet.find((candidate) => candidate.id === shipId));
+  if (ships.some((ship) => !ship || ship.routeId)) throw new Error("选择的船只中有船已被分配");
+  const selectedShips = ships as OwnedShip[];
+  if (selectedShips.some((ship) => {
+    const maintenance = shipMaintenanceState(ship, state.day);
+    return maintenance !== "ready" && maintenance !== "due";
+  })) throw new Error("选择的船只中有船正在维护或已被强制停航");
+  const selectedTypes = selectedShips.map((ship) => shipTypes.find((candidate) => candidate.id === ship.shipTypeId));
+  if (selectedTypes.some((shipType) => !shipType)) throw new Error("船型数据不存在");
+  const concreteTypes = selectedTypes as ShipType[];
+  if (concreteTypes.some((shipType) => !shipType.supportedModes.includes(input.routingMode))) {
+    throw new Error(`所选船只必须全部安装${input.routingMode === "warp" ? "曲率" : "超空间"}引擎`);
   }
-  const shipType = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
-  if (!shipType) throw new Error("船型数据不存在");
-  if (!shipType.supportedModes.includes(input.routingMode)) {
-    throw new Error(`${shipType.name} 没有安装${input.routingMode === "warp" ? "曲率" : "超空间"}引擎`);
+  const serviceSpeed = concreteTypes[0]!.speedByMode[input.routingMode];
+  if (!serviceSpeed || concreteTypes.some((shipType) => shipType.speedByMode[input.routingMode] !== serviceSpeed)) {
+    throw new Error("同一航线只能分配推进方式与航行速度相同的船只");
   }
+  const shipType = concreteTypes[0]!;
   const number = state.nextRouteNumber;
   const route: Route = {
     id: `player-route-${number}`,
@@ -416,23 +434,30 @@ export function createPlayerRoute(
       minimumStopHours: 24,
     })),
     shipTypeId: shipType.id,
-    assignedShips: 1,
+    assignedShips: selectedShips.length,
     pricing: routePricing(Math.max(0.65, Math.min(1.8, input.fareMultiplier))),
     maintenanceAllowanceHours: 0,
     active: true,
   };
-  buildRouteServices(route, shipType, galaxy.ports, gameWorldLegs(galaxy));
+  for (const selectedType of concreteTypes) {
+    buildRouteServices(
+      { ...route, shipTypeId: selectedType.id, assignedShips: 1 },
+      selectedType,
+      galaxy.ports,
+      gameWorldLegs(galaxy),
+    );
+  }
   return {
     state: {
       ...state,
       cash: state.cash - ROUTE_OPENING_COST,
       routes: [...state.routes, route],
       fleet: state.fleet.map((candidate) =>
-        candidate.id === ship.id ? { ...candidate, routeId: route.id } : candidate,
+        selectedShipIds.includes(candidate.id) ? { ...candidate, routeId: route.id } : candidate,
       ),
       nextRouteNumber: number + 1,
     },
-    message: `航线“${route.name}”已开通`,
+    message: `航线“${route.name}”已开通，已分配 ${selectedShips.length} 艘船`,
   };
 }
 
@@ -547,10 +572,11 @@ function routeSchedule(route: Route, scenario: SimulationScenario): { departures
   const roundTripDays = departuresPerWeek > 0
     ? (7 * route.assignedShips * shipType.operationalAvailability) / departuresPerWeek
     : 0;
-  const dailyFlightHours = services.reduce(
+  const fleetDailyFlightHours = services.reduce(
     (sum, service) => sum + service.inVehicleHours * service.departuresPerWeek / 7,
     0,
   );
+  const dailyFlightHours = fleetDailyFlightHours / Math.max(1, route.assignedShips);
   return { departuresPerWeek, roundTripDays, dailyFlightHours };
 }
 
@@ -601,7 +627,10 @@ function applyAutomaticMaintenance(
       const schedule = routeSchedule(route, scenario);
       const cycleHours = schedule.roundTripDays * 24;
       if (cycleHours <= 24) return true;
-      const phase = ((day - 1) * 24) % cycleHours;
+      const routeShips = fleet.filter((candidate) => candidate.routeId === route.id);
+      const shipIndex = Math.max(0, routeShips.findIndex((candidate) => candidate.id === ship.id));
+      const phaseOffset = (shipIndex * cycleHours) / Math.max(1, routeShips.length);
+      const phase = (((day - 1) * 24 + phaseOffset) % cycleHours + cycleHours) % cycleHours;
       return phase < 0.001 || phase >= cycleHours - 24;
     })();
     if (!isAtMainBase) return ship;
