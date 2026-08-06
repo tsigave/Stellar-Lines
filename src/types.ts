@@ -165,7 +165,13 @@ export interface ShipType {
   id: string;
   name: string;
   manufacturer: string;
+  familyId: string;
+  familyName: string;
+  variant: string;
   description: string;
+  structuralMassTonnes: number;
+  fuelCapacityTonnes: number;
+  fixedMaintenanceCostPerDay: number;
   /** 可用于客舱的空间单位；经济/商务/头等座分别占用 1/3/6 单位。 */
   cabinSpace: number;
   /** 标准宣传布局的总座位数，玩家自有船只仍从空舱开始配置。 */
@@ -226,6 +232,11 @@ export interface ServiceLeg {
   dailySeatCapacity: number;
   seatsPerDepartureByClass?: CabinConfiguration;
   dailySeatCapacityByClass?: CabinConfiguration;
+  fuelConsumptionPerDepartureEmpty?: number;
+  fuelConsumptionPerDepartureFull?: number;
+  fuelLoadPerDepartureEmpty?: number;
+  fuelLoadPerDepartureFull?: number;
+  operatingCostPerPassenger?: number;
   fareByClass: Record<PassengerClass, number>;
   comfort: number;
   reputation: number;

@@ -4,7 +4,8 @@ import {
   adjustPlayerRouteFare,
   buyShip,
   closePlayerRoute,
-  configureShipCabins,
+  assignShipsToFleetConfiguration,
+  createFleetConfiguration,
   createGeneratedGameEvents,
   createGeneratedScenario,
   createNewGame,
@@ -14,10 +15,10 @@ import {
   isGameState,
   performShipMaintenance,
   setAutoMaintenanceThreshold,
+  updateFleetConfiguration,
   simulateCampaign,
   togglePlayerRoute,
   type CreateRouteInput,
-  type CabinConfiguration,
   type GalaxyGenerationConfig,
   type GameState,
 } from "../index.js";
@@ -197,7 +198,9 @@ export function App() {
           game={game}
           shipTypes={generated.scenario.shipTypes}
           onBuyShips={(shipTypeId, quantity) => commit(() => buyShip(game, shipTypeId, generated.scenario.shipTypes, quantity))}
-          onConfigureCabins={(shipId, cabins: CabinConfiguration) => commit(() => configureShipCabins(game, shipId, cabins, generated.scenario.shipTypes))}
+          onCreateConfiguration={(shipTypeId, name, cabins) => commit(() => createFleetConfiguration(game, shipTypeId, name, cabins, generated.scenario.shipTypes))}
+          onUpdateConfiguration={(configurationId, name, cabins) => commit(() => updateFleetConfiguration(game, configurationId, name, cabins, generated.scenario.shipTypes))}
+          onAssignShips={(configurationId, shipIds) => commit(() => assignShipsToFleetConfiguration(game, configurationId, shipIds))}
           onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
           onAutoMaintenanceThresholdChange={(threshold) => commit(() => setAutoMaintenanceThreshold(game, threshold))}
         />

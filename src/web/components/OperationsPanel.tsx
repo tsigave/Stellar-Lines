@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   buildRouteServices,
-  cabinSpaceUsed,
+  fleetConfigurationForShip,
   gameWorldLegs,
   ROUTE_OPENING_COST,
   shipMaintenanceState,
@@ -46,17 +46,19 @@ export function OperationsPanel({
   const availableShips = useMemo(
     () => game.fleet.filter((ship) =>
       ship.routeId === null &&
-      cabinSpaceUsed(ship.cabins) > 0 &&
+      !!fleetConfigurationForShip(game, ship) &&
       shipMaintenanceState(ship, game.day) !== "maintenance" &&
       shipMaintenanceState(ship, game.day) !== "required"
     ),
     [game.day, game.fleet],
   );
   const selectedShips = availableShips.filter((ship) => selectedShipIds.includes(ship.id));
+  const selectedConfigurations = selectedShips.map((ship) => fleetConfigurationForShip(game, ship)!);
   const selectedShipTypes = selectedShips
     .map((ship) => shipTypes.find((type) => type.id === ship.shipTypeId))
     .filter((type): type is ShipType => !!type);
   const selectedSpeed = selectedShipTypes[0]?.speedByMode[routingMode];
+  const selectedShipTypeId = selectedShipTypes[0]?.id;
   const modeCompatibleShips = availableShips.filter((ship) => {
     const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
     return !!type?.supportedModes.includes(routingMode);
@@ -65,7 +67,8 @@ export function OperationsPanel({
     const ship = availableShips.find((candidate) => candidate.id === shipId);
     const type = shipTypes.find((candidate) => candidate.id === ship?.shipTypeId);
     return !!type && type.supportedModes.includes(routingMode) &&
-      (selectedSpeed === undefined || type.speedByMode[routingMode] === selectedSpeed);
+      (selectedSpeed === undefined || type.speedByMode[routingMode] === selectedSpeed) &&
+      (selectedShipTypeId === undefined || type.id === selectedShipTypeId);
   };
 
   useEffect(() => {
@@ -87,11 +90,11 @@ export function OperationsPanel({
   const averageCabins = useMemo<CabinConfiguration | null>(() => {
     if (selectedShips.length === 0) return null;
     return {
-      economy: selectedShips.reduce((sum, ship) => sum + ship.cabins.economy, 0) / selectedShips.length,
-      business: selectedShips.reduce((sum, ship) => sum + ship.cabins.business, 0) / selectedShips.length,
-      premium: selectedShips.reduce((sum, ship) => sum + ship.cabins.premium, 0) / selectedShips.length,
+      economy: selectedConfigurations.reduce((sum, configuration) => sum + configuration.cabins.economy, 0) / selectedShips.length,
+      business: selectedConfigurations.reduce((sum, configuration) => sum + configuration.cabins.business, 0) / selectedShips.length,
+      premium: selectedConfigurations.reduce((sum, configuration) => sum + configuration.cabins.premium, 0) / selectedShips.length,
     };
-  }, [selectedShips]);
+  }, [selectedConfigurations, selectedShips.length]);
 
   const preview = useMemo(() => {
     const selectedShipType = selectedShipTypes[0];
@@ -128,6 +131,10 @@ export function OperationsPanel({
           : 0,
         oneWayHours: services[0]?.inVehicleHours ?? 0,
         seats: services[0]?.seatsPerDeparture ?? 0,
+        fuelEmpty: services[0]?.fuelConsumptionPerDepartureEmpty ?? 0,
+        fuelFull: services[0]?.fuelConsumptionPerDepartureFull ?? 0,
+        fuelLoadEmpty: services[0]?.fuelLoadPerDepartureEmpty ?? 0,
+        fuelLoadFull: services[0]?.fuelLoadPerDepartureFull ?? 0,
       };
     } catch (caught) {
       return {
@@ -136,6 +143,10 @@ export function OperationsPanel({
         roundTripDays: 0,
         oneWayHours: 0,
         seats: 0,
+        fuelEmpty: 0,
+        fuelFull: 0,
+        fuelLoadEmpty: 0,
+        fuelLoadFull: 0,
       };
     }
   }, [averageCabins, destinationPortId, fareMultiplier, galaxy, game.basePortId, routingMode, selectedShipIds.length, selectedShipTypes]);
@@ -197,13 +208,14 @@ export function OperationsPanel({
           const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId)!;
           const checked = selectedShipIds.includes(ship.id);
           const compatible = checked || isShipCompatible(ship.id);
-          const totalSeats = ship.cabins.economy + ship.cabins.business + ship.cabins.premium;
+          const configuration = fleetConfigurationForShip(game, ship)!;
+          const totalSeats = configuration.cabins.economy + configuration.cabins.business + configuration.cabins.premium;
           return (
             <label className={compatible ? "" : "incompatible"} key={ship.id}>
               <input type="checkbox" checked={checked} disabled={!compatible} onChange={() => toggleShip(ship.id)} />
               <span>
                 <strong>{ship.name}</strong>
-                <small>{type.name} · {totalSeats} 座 · {type.speedByMode[routingMode]} 光年/日</small>
+                <small>{type.name} · {configuration.name} · {totalSeats} 座 · {type.speedByMode[routingMode]} 光年/日</small>
               </span>
             </label>
           );
@@ -225,6 +237,8 @@ export function OperationsPanel({
           <span>往返周期<strong>{preview.roundTripDays.toFixed(1)} 日</strong></span>
           <span>每班座位<strong>{preview.seats.toFixed(0)}</strong></span>
           <span>计划班次<strong>{preview.departuresPerWeek.toFixed(1)} / 周</strong></span>
+          <span>空载耗油 / 装油<strong>{preview.fuelEmpty.toFixed(1)} / {preview.fuelLoadEmpty.toFixed(1)}</strong></span>
+          <span>满载耗油 / 装油<strong>{preview.fuelFull.toFixed(1)} / {preview.fuelLoadFull.toFixed(1)}</strong></span>
         </div>
       )}
       {preview?.error && <div className="route-preview-error">{preview.error}</div>}

@@ -3,6 +3,7 @@ export * from "./campaign.js";
 export * from "./choice.js";
 export * from "./demand.js";
 export * from "./events.js";
+export * from "./fuel.js";
 export * from "./graph.js";
 export * from "./game.js";
 export * from "./generation/galaxy.js";

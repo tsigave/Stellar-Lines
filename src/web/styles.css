@@ -919,7 +919,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fleet-overview {
   padding: 20px 22px;
   display: grid;
-  grid-template-columns: minmax(320px, 1.4fr) minmax(330px, 1fr) minmax(260px, 0.8fr);
+  grid-template-columns: minmax(320px, 1.4fr) minmax(330px, 1fr) minmax(250px, 0.85fr) minmax(220px, 0.7fr);
   align-items: center;
   gap: 24px;
 }
@@ -930,12 +930,38 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fleet-overview-stats div:last-child { border-right: 0; }
 .fleet-overview-stats span { color: var(--muted); font-size: 12px; }
 .fleet-overview-stats strong { color: #e0f2f1; font-size: 24px; }
+.maintenance-cost-summary { min-height: 74px; padding: 12px 14px; display: flex; flex-direction: column; justify-content: center; gap: 5px; border: 1px solid rgba(242, 189, 105, 0.25); background: rgba(45, 31, 15, 0.22); }
+.maintenance-cost-summary > span { color: #a58e6d; font-size: 12px; }
+.maintenance-cost-summary > strong { color: var(--amber); font-size: 20px; }
+.maintenance-cost-summary > small { color: #887d6c; font-size: 12px; line-height: 1.45; }
 .top-policy { margin: 0; }
 .top-policy small { font-size: 12px; line-height: 1.5; }
 .fleet-section { padding: 20px 22px 24px; }
 .fleet-section-heading { margin-bottom: 16px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .fleet-section-heading h2 { margin-top: 5px; font-size: 20px; }
 .fleet-section-heading > p { max-width: 620px; margin: 0; color: #8298a1; font-size: 14px; line-height: 1.5; text-align: right; }
+.type-configuration-group + .type-configuration-group { margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--border); }
+.type-configuration-heading { margin-bottom: 10px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.type-configuration-heading > div { display: flex; flex-direction: column; gap: 4px; }
+.type-configuration-heading strong { color: #d5e7e8; font-size: 17px; }
+.type-configuration-heading span { color: #778e97; font-size: 12px; }
+.type-configuration-heading em { color: var(--teal); font-size: 13px; font-style: normal; }
+.configuration-grid { display: grid; grid-template-columns: repeat(2, minmax(390px, 1fr)); gap: 12px; }
+.fleet-configuration-card { min-width: 0; padding: 15px; border: 1px solid rgba(111, 160, 170, 0.2); background: rgba(7, 18, 27, 0.7); }
+.new-configuration-card { border-style: dashed; }
+.configuration-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.configuration-heading input, .new-configuration-card > input { width: 100%; height: 38px; padding: 0 10px; font-size: 14px; }
+.configuration-heading strong { color: #d7e8ea; font-size: 16px; }
+.configuration-heading span { flex: 0 0 auto; color: #78909a; font-size: 12px; }
+.automatic-fuel-note { margin: 10px 0 0; padding: 8px 10px; border-left: 2px solid rgba(80, 223, 206, 0.42); color: #78959a; background: rgba(17, 49, 53, 0.28); font-size: 12px; line-height: 1.5; }
+.save-configuration { width: 100%; min-height: 38px; margin-top: 10px; border: 1px solid rgba(80, 223, 206, 0.34); color: #c5f6ee; background: rgba(34, 119, 112, 0.2); cursor: pointer; }
+.configuration-assignment { margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--border); }
+.configuration-assignment > strong { color: #aabdc1; font-size: 13px; }
+.configuration-assignment > div { max-height: 154px; margin-top: 8px; overflow: auto; display: grid; gap: 5px; }
+.configuration-assignment label { min-height: 34px; padding: 6px 8px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; border: 1px solid rgba(111, 160, 170, 0.14); background: rgba(3, 12, 18, 0.5); }
+.configuration-assignment label span { color: #bdd0d3; font-size: 13px; }
+.configuration-assignment label small { color: #71858d; font-size: 12px; }
+.configuration-assignment > button { width: 100%; min-height: 36px; margin-top: 8px; border: 1px solid rgba(112, 163, 177, 0.25); color: #bad0cd; background: rgba(17, 37, 49, 0.7); cursor: pointer; }
 .owned-fleet-grid, .ship-catalog-grid { display: grid; grid-template-columns: repeat(3, minmax(300px, 1fr)); gap: 12px; }
 .fleet-ship-card, .ship-catalog-card { min-width: 0; padding: 16px; border: 1px solid rgba(111, 160, 170, 0.18); background: rgba(7, 18, 27, 0.7); }
 .fleet-ship-card.due { border-color: rgba(242, 189, 105, 0.34); }
@@ -947,6 +973,10 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fleet-card-heading em { color: var(--teal); font-size: 12px; font-style: normal; }
 .catalog-card-heading em { flex: 0 0 auto; color: var(--amber); font-size: 14px; font-style: normal; }
 .fleet-condition-row { margin-top: 13px; display: flex; justify-content: space-between; gap: 12px; color: #81969f; font-size: 12px; }
+.ship-configuration-summary { min-height: 68px; margin-top: 12px; padding: 9px 10px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); background: rgba(3, 12, 18, 0.54); }
+.ship-configuration-summary span { color: #71868e; font-size: 12px; }
+.ship-configuration-summary strong { color: #c7dadd; font-size: 14px; }
+.ship-configuration-summary small { color: #80969e; font-size: 12px; line-height: 1.45; }
 .cabin-editor-heading { margin-top: 15px; display: flex; align-items: baseline; justify-content: space-between; }
 .cabin-editor-heading strong { font-size: 14px; }
 .cabin-editor-heading span { color: var(--teal); font-size: 12px; }
@@ -960,6 +990,20 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fleet-card-actions { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .fleet-card-actions button { min-height: 36px; border: 1px solid rgba(112, 163, 177, 0.22); color: #a8c2be; background: rgba(17, 37, 49, 0.7); cursor: pointer; }
 .fleet-card-actions button:first-child { border-color: rgba(80, 223, 206, 0.3); color: #c5f6ee; }
+.fleet-card-actions.single-action { grid-template-columns: 1fr; }
+.ship-family-menu { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 8px; }
+.ship-family-menu button { min-height: 58px; padding: 9px 11px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; border: 1px solid var(--border); color: #9fb2b7; background: rgba(5, 16, 24, 0.66); cursor: pointer; text-align: left; }
+.ship-family-menu button:hover, .ship-family-menu button.active { border-color: rgba(80, 223, 206, 0.42); background: rgba(26, 83, 80, 0.2); }
+.ship-family-menu button strong { color: #cbdcde; font-size: 14px; }
+.ship-family-menu button.active strong { color: #d8fff8; }
+.ship-family-menu button span { color: #738a92; font-size: 12px; }
+.ship-variant-menu { margin-top: 10px; padding: 10px; display: flex; align-items: stretch; gap: 7px; overflow-x: auto; border: 1px solid rgba(111, 160, 170, 0.18); background: rgba(4, 14, 21, 0.54); }
+.ship-variant-menu > span { min-width: 94px; display: flex; align-items: center; color: #758b93; font-size: 12px; }
+.ship-variant-menu button { min-width: 132px; min-height: 50px; padding: 7px 9px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; border: 1px solid rgba(111, 160, 170, 0.18); color: #b7cbce; background: rgba(11, 27, 38, 0.68); font-size: 14px; cursor: pointer; }
+.ship-variant-menu button:hover, .ship-variant-menu button.active { border-color: rgba(242, 189, 105, 0.45); color: #ffe2ac; background: rgba(72, 50, 22, 0.26); }
+.ship-variant-menu button small { color: #748890; font-size: 12px; }
+.selected-ship-catalog { max-width: 920px; margin-top: 12px; }
+.selected-ship-catalog .ship-catalog-card { border-color: rgba(111, 160, 170, 0.3); }
 .ship-catalog-card > p:not(.sublight-explanation) { min-height: 48px; margin: 12px 0; color: #8ca0a8; font-size: 14px; line-height: 1.55; }
 .ship-spec-grid { display: grid; grid-template-columns: repeat(2, 1fr); border: 1px solid var(--border); }
 .ship-spec-grid div { min-height: 58px; padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
@@ -970,6 +1014,16 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .drive-specs { margin-top: 10px; display: flex; flex-direction: column; border: 1px solid var(--border); }
 .drive-specs div { padding: 8px 10px; display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); }
 .drive-specs div:last-child { border-bottom: 0; }
+.fuel-curve-table { margin-top: 10px; border: 1px solid var(--border); }
+.fuel-curve-heading, .fuel-curve-table > div:not(.fuel-curve-heading) { min-height: 42px; padding: 7px 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); }
+.fuel-curve-table > div:last-child { border-bottom: 0; }
+.fuel-curve-heading { min-height: 36px; background: rgba(17, 37, 49, 0.52); }
+.fuel-curve-heading span { color: #9db3b8; font-size: 13px; }
+.fuel-curve-heading small { color: #738990; font-size: 12px; }
+.fuel-curve-table > div:not(.fuel-curve-heading) > span { display: flex; flex-direction: column; gap: 2px; color: #aebfc2; font-size: 12px; }
+.fuel-curve-table > div:not(.fuel-curve-heading) small { color: #667d85; font-size: 12px; }
+.fuel-curve-table strong { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: #bfe4de; font-size: 13px; font-weight: 600; }
+.fuel-curve-table strong small { color: #71878e; font-size: 12px; font-weight: 400; }
 .purchase-row { margin-top: 13px; display: grid; grid-template-columns: 88px minmax(110px, 1fr) 86px; align-items: end; gap: 8px; }
 .purchase-row label, .purchase-row > div { display: flex; flex-direction: column; gap: 5px; color: #81959d; font-size: 12px; }
 .purchase-row input { height: 37px; font-size: 14px; }
@@ -992,6 +1046,8 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .map-game-stack { min-height: 610px; }
   .fleet-overview { grid-template-columns: 1fr 1fr; }
   .fleet-overview .top-policy { grid-column: 1 / -1; }
+  .configuration-grid { grid-template-columns: 1fr; }
+  .ship-family-menu { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
   .owned-fleet-grid, .ship-catalog-grid { grid-template-columns: repeat(2, minmax(280px, 1fr)); }
 }
 
@@ -1016,6 +1072,13 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .fleet-section-heading { align-items: flex-start; flex-direction: column; }
   .fleet-section-heading > p { text-align: left; }
   .owned-fleet-grid, .ship-catalog-grid { grid-template-columns: 1fr; }
+  .configuration-heading { align-items: stretch; flex-direction: column; }
+  .configuration-assignment label { grid-template-columns: auto 1fr; }
+  .configuration-assignment label small { grid-column: 2; }
+  .ship-family-menu { grid-template-columns: 1fr; }
+  .ship-variant-menu { align-items: stretch; flex-direction: column; overflow: visible; }
+  .ship-variant-menu > span { min-width: 0; }
+  .ship-variant-menu button { width: 100%; }
   .cabin-editor { grid-template-columns: 1fr; }
   .cabin-editor label { grid-template-columns: 1fr auto; }
   .app-shell { padding-bottom: 104px; }

@@ -91,7 +91,9 @@ export function simulateDay(input: SimulateDayInput): DaySettlement {
         ? (satisfactionByService.get(service.id) ?? 0) / passengers
         : service.satisfactionByClass.economy,
       ticketRevenue: revenueByService.get(service.id) ?? 0,
-      operatingCost: service.dailyOperatingCost,
+      operatingCost:
+        service.dailyOperatingCost +
+        passengers * (service.operatingCostPerPassenger ?? 0),
     };
   });
 

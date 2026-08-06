@@ -15,7 +15,7 @@ import type {
   WorldLeg,
 } from "./types.js";
 
-export const GAME_STATE_VERSION = 4;
+export const GAME_STATE_VERSION = 6;
 export const STARTING_CASH = 3_000_000;
 export const ROUTE_OPENING_COST = 25_000;
 export const DAILY_COMPANY_OVERHEAD = 700;
@@ -45,6 +45,13 @@ export interface OwnedShip {
   condition: number;
   flightHoursSinceMaintenance: number;
   maintenanceUntilDay: number | null;
+  configurationId: string | null;
+}
+
+export interface FleetConfiguration {
+  id: string;
+  shipTypeId: string;
+  name: string;
   cabins: CabinConfiguration;
 }
 
@@ -60,8 +67,13 @@ export function cabinSpaceUsed(cabins: CabinConfiguration): number {
     cabins.premium * CABIN_SPACE_PER_SEAT.premium;
 }
 
-function emptyCabins(): CabinConfiguration {
-  return { economy: 0, business: 0, premium: 0 };
+export function fleetConfigurationForShip(
+  state: Pick<GameState, "fleetConfigurations">,
+  ship: OwnedShip,
+): FleetConfiguration | undefined {
+  return ship.configurationId
+    ? state.fleetConfigurations.find((configuration) => configuration.id === ship.configurationId)
+    : undefined;
 }
 
 export interface FuelPriceRecord {
@@ -103,10 +115,12 @@ export interface GameState {
   cash: number;
   basePortId: string;
   fleet: readonly OwnedShip[];
+  fleetConfigurations: readonly FleetConfiguration[];
   routes: readonly Route[];
   history: readonly GameDayRecord[];
   fuelMarket: readonly FuelPriceRecord[];
   nextShipNumber: number;
+  nextFleetConfigurationNumber: number;
   nextRouteNumber: number;
   status: GameStatus;
   primaryGoalCompletedOnDay: number | null;
@@ -280,15 +294,21 @@ function operationalPlayerRoutes(state: GameState): Route[] {
     if (!route.active) return [];
     const availableShips = shipsForRoute(state, route.id).filter((ship) => {
       const maintenance = shipMaintenanceState(ship, state.day);
-      return maintenance !== "required" && maintenance !== "maintenance";
+      return maintenance !== "required" && maintenance !== "maintenance" &&
+        !!fleetConfigurationForShip(state, ship);
     });
     if (availableShips.length === 0) return [];
+    const configurations = availableShips.map((ship) => fleetConfigurationForShip(state, ship)!);
     const cabinCapacityByClass: CabinConfiguration = {
-      economy: availableShips.reduce((sum, ship) => sum + ship.cabins.economy, 0) / availableShips.length,
-      business: availableShips.reduce((sum, ship) => sum + ship.cabins.business, 0) / availableShips.length,
-      premium: availableShips.reduce((sum, ship) => sum + ship.cabins.premium, 0) / availableShips.length,
+      economy: configurations.reduce((sum, configuration) => sum + configuration.cabins.economy, 0) / availableShips.length,
+      business: configurations.reduce((sum, configuration) => sum + configuration.cabins.business, 0) / availableShips.length,
+      premium: configurations.reduce((sum, configuration) => sum + configuration.cabins.premium, 0) / availableShips.length,
     };
-    return [{ ...route, assignedShips: availableShips.length, cabinCapacityByClass }];
+    return [{
+      ...route,
+      assignedShips: availableShips.length,
+      cabinCapacityByClass,
+    }];
   });
 }
 
@@ -315,13 +335,15 @@ export function createNewGame(
         condition: 100,
         flightHoursSinceMaintenance: 0,
         maintenanceUntilDay: null,
-        cabins: emptyCabins(),
+        configurationId: null,
       },
     ],
+    fleetConfigurations: [],
     routes: [],
     history: [],
     fuelMarket: [fuelPriceRecord(galaxy, 1)],
     nextShipNumber: 2,
+    nextFleetConfigurationNumber: 1,
     nextRouteNumber: 1,
     status: "playing",
     primaryGoalCompletedOnDay: null,
@@ -341,11 +363,10 @@ export function isGameState(value: unknown): value is GameState {
     candidate.fleet.every((ship) =>
       !!ship &&
       typeof ship === "object" &&
-      !!(ship as Partial<OwnedShip>).cabins &&
-      typeof (ship as Partial<OwnedShip>).cabins?.economy === "number" &&
-      typeof (ship as Partial<OwnedShip>).cabins?.business === "number" &&
-      typeof (ship as Partial<OwnedShip>).cabins?.premium === "number"
+      ((ship as Partial<OwnedShip>).configurationId === null ||
+        typeof (ship as Partial<OwnedShip>).configurationId === "string")
     ) &&
+    Array.isArray(candidate.fleetConfigurations) &&
     Array.isArray(candidate.routes) &&
     Array.isArray(candidate.history) &&
     Array.isArray(candidate.fuelMarket) &&
@@ -410,7 +431,7 @@ export function buyShip(
       condition: 100,
       flightHoursSinceMaintenance: 0,
       maintenanceUntilDay: null,
-      cabins: emptyCabins(),
+      configurationId: null,
     };
   });
   return {
@@ -424,21 +445,10 @@ export function buyShip(
   };
 }
 
-export function configureShipCabins(
-  state: GameState,
-  shipId: string,
+function normalizeFleetConfiguration(
+  shipType: ShipType,
   cabins: CabinConfiguration,
-  shipTypes: readonly ShipType[],
-): GameActionResult {
-  requirePlaying(state);
-  const ship = state.fleet.find((candidate) => candidate.id === shipId);
-  if (!ship) throw new Error("舰船不存在");
-  if (ship.routeId) throw new Error("已分配航线的舰船不能调整舱位");
-  if (shipMaintenanceState(ship, state.day) === "maintenance") {
-    throw new Error("维护中的舰船不能调整舱位");
-  }
-  const shipType = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
-  if (!shipType) throw new Error("船型数据不存在");
+): CabinConfiguration {
   if (Object.values(cabins).some((seats) => !Number.isFinite(seats) || seats < 0)) {
     throw new Error("舱位数量必须是非负有限数字");
   }
@@ -450,15 +460,117 @@ export function configureShipCabins(
   if (cabinSpaceUsed(normalized) > shipType.cabinSpace) {
     throw new Error(`舱位占用超过 ${shipType.cabinSpace} 个可用空间单位`);
   }
+  if (cabinSpaceUsed(normalized) === 0) throw new Error("配置方案至少需要一个客舱座位");
+  return normalized;
+}
+
+export function createFleetConfiguration(
+  state: GameState,
+  shipTypeId: string,
+  name: string,
+  cabins: CabinConfiguration,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  requirePlaying(state);
+  const shipType = shipTypes.find((candidate) => candidate.id === shipTypeId);
+  if (!shipType) throw new Error("船型数据不存在");
+  const normalized = normalizeFleetConfiguration(shipType, cabins);
+  const number = state.nextFleetConfigurationNumber;
+  const configuration: FleetConfiguration = {
+    id: `fleet-config-${number}`,
+    shipTypeId,
+    name: name.trim() || `${shipType.familyName}方案 ${number}`,
+    cabins: normalized,
+  };
   return {
     state: {
       ...state,
-      fleet: state.fleet.map((candidate) =>
-        candidate.id === shipId ? { ...candidate, cabins: normalized } : candidate,
+      fleetConfigurations: [...state.fleetConfigurations, configuration],
+      nextFleetConfigurationNumber: number + 1,
+    },
+    message: `已创建 ${shipType.name} 的“${configuration.name}”配置方案`,
+  };
+}
+
+export function updateFleetConfiguration(
+  state: GameState,
+  configurationId: string,
+  name: string,
+  cabins: CabinConfiguration,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  requirePlaying(state);
+  const configuration = state.fleetConfigurations.find((candidate) => candidate.id === configurationId);
+  if (!configuration) throw new Error("配置方案不存在");
+  if (state.fleet.some((ship) => ship.configurationId === configurationId && ship.routeId)) {
+    throw new Error("方案下仍有执行航线的舰船，不能修改");
+  }
+  const shipType = shipTypes.find((candidate) => candidate.id === configuration.shipTypeId);
+  if (!shipType) throw new Error("船型数据不存在");
+  const normalized = normalizeFleetConfiguration(shipType, cabins);
+  const updated = {
+    ...configuration,
+    name: name.trim() || configuration.name,
+    cabins: normalized,
+  };
+  return {
+    state: {
+      ...state,
+      fleetConfigurations: state.fleetConfigurations.map((candidate) =>
+        candidate.id === configurationId ? updated : candidate,
       ),
     },
-    message: `${ship.name} 舱位已更新：头等 ${normalized.premium}、商务 ${normalized.business}、经济 ${normalized.economy}`,
+    message: `配置方案“${updated.name}”已更新`,
   };
+}
+
+export function assignShipsToFleetConfiguration(
+  state: GameState,
+  configurationId: string,
+  shipIds: readonly string[],
+): GameActionResult {
+  requirePlaying(state);
+  const configuration = state.fleetConfigurations.find((candidate) => candidate.id === configurationId);
+  if (!configuration) throw new Error("配置方案不存在");
+  const uniqueShipIds = [...new Set(shipIds)];
+  if (uniqueShipIds.length === 0) throw new Error("请至少选择一艘舰船");
+  const ships = uniqueShipIds.map((shipId) => state.fleet.find((candidate) => candidate.id === shipId));
+  if (ships.some((ship) => !ship)) throw new Error("舰船不存在");
+  if (ships.some((ship) => ship!.shipTypeId !== configuration.shipTypeId)) {
+    throw new Error("配置方案只能分配给完全相同的船型");
+  }
+  if (ships.some((ship) => ship!.routeId || shipMaintenanceState(ship!, state.day) === "maintenance")) {
+    throw new Error("执行航线或维护中的舰船不能更换配置方案");
+  }
+  return {
+    state: {
+      ...state,
+      fleet: state.fleet.map((ship) =>
+        uniqueShipIds.includes(ship.id) ? { ...ship, configurationId } : ship,
+      ),
+    },
+    message: `已将 ${uniqueShipIds.length} 艘舰船分配至“${configuration.name}”`,
+  };
+}
+
+/** 兼容命令行与旧调用：创建一个方案并立即分配指定舰船。 */
+export function configureShipCabins(
+  state: GameState,
+  shipId: string,
+  cabins: CabinConfiguration,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  const ship = state.fleet.find((candidate) => candidate.id === shipId);
+  if (!ship) throw new Error("舰船不存在");
+  const created = createFleetConfiguration(
+    state,
+    ship.shipTypeId,
+    `${ship.name} 标准方案`,
+    cabins,
+    shipTypes,
+  );
+  const configuration = created.state.fleetConfigurations.at(-1)!;
+  return assignShipsToFleetConfiguration(created.state, configuration.id, [shipId]);
 }
 
 function routePricing(multiplier: number): Route["pricing"] {
@@ -483,9 +595,11 @@ export function createPlayerRoute(
   const ships = selectedShipIds.map((shipId) => state.fleet.find((candidate) => candidate.id === shipId));
   if (ships.some((ship) => !ship || ship.routeId)) throw new Error("选择的船只中有船已被分配");
   const selectedShips = ships as OwnedShip[];
-  if (selectedShips.some((ship) => cabinSpaceUsed(ship.cabins) === 0)) {
-    throw new Error("所选舰船仍为空舱，请先在舰队选项卡配置舱位");
+  const selectedConfigurations = selectedShips.map((ship) => fleetConfigurationForShip(state, ship));
+  if (selectedConfigurations.some((configuration) => !configuration)) {
+    throw new Error("所选舰船尚未分配统一配置方案");
   }
+  const configurations = selectedConfigurations as FleetConfiguration[];
   if (selectedShips.some((ship) => {
     const maintenance = shipMaintenanceState(ship, state.day);
     return maintenance !== "ready" && maintenance !== "due";
@@ -493,6 +607,9 @@ export function createPlayerRoute(
   const selectedTypes = selectedShips.map((ship) => shipTypes.find((candidate) => candidate.id === ship.shipTypeId));
   if (selectedTypes.some((shipType) => !shipType)) throw new Error("船型数据不存在");
   const concreteTypes = selectedTypes as ShipType[];
+  if (concreteTypes.some((shipType) => shipType.id !== concreteTypes[0]!.id)) {
+    throw new Error("同一航线只能分配相同船型的舰船");
+  }
   if (concreteTypes.some((shipType) => !shipType.supportedModes.includes(input.routingMode))) {
     throw new Error(`所选船只必须全部安装${input.routingMode === "warp" ? "曲率" : "超空间"}引擎`);
   }
@@ -502,9 +619,9 @@ export function createPlayerRoute(
   }
   const shipType = concreteTypes[0]!;
   const cabinCapacityByClass: CabinConfiguration = {
-    economy: selectedShips.reduce((sum, ship) => sum + ship.cabins.economy, 0) / selectedShips.length,
-    business: selectedShips.reduce((sum, ship) => sum + ship.cabins.business, 0) / selectedShips.length,
-    premium: selectedShips.reduce((sum, ship) => sum + ship.cabins.premium, 0) / selectedShips.length,
+    economy: configurations.reduce((sum, configuration) => sum + configuration.cabins.economy, 0) / selectedShips.length,
+    business: configurations.reduce((sum, configuration) => sum + configuration.cabins.business, 0) / selectedShips.length,
+    premium: configurations.reduce((sum, configuration) => sum + configuration.cabins.premium, 0) / selectedShips.length,
   };
   const number = state.nextRouteNumber;
   const route: Route = {
@@ -762,6 +879,51 @@ function ageFleetAfterDay(
   });
 }
 
+export interface FleetFixedMaintenanceSummary {
+  total: number;
+  undiscountedTotal: number;
+  supplierDiscount: number;
+  familyDiscount: number;
+}
+
+export function fleetFixedMaintenanceCost(
+  fleet: readonly OwnedShip[],
+  shipTypes: readonly ShipType[],
+): FleetFixedMaintenanceSummary {
+  const typeById = new Map(shipTypes.map((shipType) => [shipType.id, shipType]));
+  const supplierCounts = new Map<string, number>();
+  const familyCounts = new Map<string, number>();
+  for (const ship of fleet) {
+    const type = typeById.get(ship.shipTypeId);
+    if (!type) continue;
+    supplierCounts.set(type.manufacturer, (supplierCounts.get(type.manufacturer) ?? 0) + 1);
+    familyCounts.set(type.familyId, (familyCounts.get(type.familyId) ?? 0) + 1);
+  }
+  let total = 0;
+  let undiscountedTotal = 0;
+  let supplierSavings = 0;
+  let familySavings = 0;
+  for (const ship of fleet) {
+    const type = typeById.get(ship.shipTypeId);
+    if (!type) continue;
+    const base = type.fixedMaintenanceCostPerDay;
+    const supplierDiscount = Math.min(0.18, Math.max(0, (supplierCounts.get(type.manufacturer) ?? 1) - 1) * 0.015);
+    const familyDiscount = Math.min(0.22, Math.max(0, (familyCounts.get(type.familyId) ?? 1) - 1) * 0.025);
+    const afterSupplier = base * (1 - supplierDiscount);
+    const discounted = afterSupplier * (1 - familyDiscount);
+    undiscountedTotal += base;
+    supplierSavings += base - afterSupplier;
+    familySavings += afterSupplier - discounted;
+    total += discounted;
+  }
+  return {
+    total: Number(total.toFixed(2)),
+    undiscountedTotal: Number(undiscountedTotal.toFixed(2)),
+    supplierDiscount: Number(supplierSavings.toFixed(2)),
+    familyDiscount: Number(familySavings.toFixed(2)),
+  };
+}
+
 export function advanceGameDay(
   state: GameState,
   baseScenario: SimulationScenario,
@@ -778,7 +940,8 @@ export function advanceGameDay(
   );
   const revenue = company?.ticketRevenue ?? 0;
   const operatingCost = company?.operatingCost ?? 0;
-  const overhead = DAILY_COMPANY_OVERHEAD + state.fleet.length * 250;
+  const fixedMaintenance = fleetFixedMaintenanceCost(state.fleet, baseScenario.shipTypes);
+  const overhead = DAILY_COMPANY_OVERHEAD + fixedMaintenance.total;
   const profit = revenue - operatingCost - overhead;
   const cash = state.cash + profit;
   const passengers = company?.passengers ?? 0;
