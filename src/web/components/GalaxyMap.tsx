@@ -131,6 +131,7 @@ function buildShipVisuals(
   galaxy: GeneratedGalaxy,
   game: GameState,
   shipTypes: readonly ShipType[],
+  simulationDay = game.day,
 ): ShipMapVisual[] {
   const systemsById = new Map(galaxy.systems.map((system) => [system.id, system]));
   const basePort = galaxy.ports.find((port) => port.id === game.basePortId)!;
@@ -181,18 +182,18 @@ function buildShipVisuals(
     const travelHours = durations.reduce((sum, duration) => sum + duration, 0);
     if (travelHours <= 0 || pathSystems.length < 2) return atBase("grounded", "没有可用航路", route.name);
     const cycleHours = travelHours * 2 + 48;
-    const phase = ((game.day - 1) * 24) % cycleHours;
+    const phase = ((simulationDay - 1) * 24) % cycleHours;
     if (phase < travelHours) {
       const position = positionAlongPath(pathSystems, durations, phase);
-      return { id: ship.id, name: ship.name, x: position.x, y: position.y, state: "traveling", status: `去程航行 · ${Math.round((phase / travelHours) * 100)}%`, routeName: route.name };
+      return { id: ship.id, name: ship.name, x: position.x + offsetX, y: position.y + offsetY, state: "traveling", status: `去程航行 · ${Math.round((phase / travelHours) * 100)}%`, routeName: route.name };
     }
     if (phase < travelHours + 24) {
-      return { id: ship.id, name: ship.name, x: toSystem.x * 10, y: toSystem.y * 7 + 10, state: "docked", status: `${toPort.name} 停靠`, routeName: route.name };
+      return { id: ship.id, name: ship.name, x: toSystem.x * 10 + offsetX, y: toSystem.y * 7 + offsetY, state: "docked", status: `${toPort.name} 停靠`, routeName: route.name };
     }
     if (phase < travelHours * 2 + 24) {
       const returnElapsed = phase - travelHours - 24;
       const position = positionAlongPath([...pathSystems].reverse(), [...durations].reverse(), returnElapsed);
-      return { id: ship.id, name: ship.name, x: position.x, y: position.y, state: "traveling", status: `返程航行 · ${Math.round((returnElapsed / travelHours) * 100)}%`, routeName: route.name };
+      return { id: ship.id, name: ship.name, x: position.x + offsetX, y: position.y + offsetY, state: "traveling", status: `返程航行 · ${Math.round((returnElapsed / travelHours) * 100)}%`, routeName: route.name };
     }
     return atBase("docked", `${basePort.name} 停靠`, route.name);
   });
@@ -223,7 +224,11 @@ export function GalaxyMap({
 }: GalaxyMapProps) {
   const [camera, setCamera] = useState<Camera>({ centerX: 500, centerY: 350, zoom: 1 });
   const [isDragging, setIsDragging] = useState(false);
+  const [displayDay, setDisplayDay] = useState(game.day);
+  const [displayGame, setDisplayGame] = useState(game);
   const dragState = useRef<DragState | null>(null);
+  const displayDayRef = useRef(game.day);
+  const displayGameRef = useRef(game);
   const systemsById = useMemo(
     () => new Map(galaxy.systems.map((system) => [system.id, system])),
     [galaxy],
@@ -240,9 +245,44 @@ export function GalaxyMap({
   }, [galaxy.config.seed]);
   const playerRoutes = game.routes;
   const shipVisuals = useMemo(
-    () => buildShipVisuals(galaxy, game, shipTypes),
-    [galaxy, game, shipTypes],
+    () => buildShipVisuals(galaxy, displayGame, shipTypes, displayDay),
+    [displayDay, displayGame, galaxy, shipTypes],
   );
+
+  useEffect(() => {
+    if (game.day === displayGameRef.current.day) {
+      displayGameRef.current = game;
+      displayDayRef.current = game.day;
+      setDisplayGame(game);
+      setDisplayDay(game.day);
+      return undefined;
+    }
+    if (game.day < displayDayRef.current || motionDurationMs <= 0) {
+      displayGameRef.current = game;
+      displayDayRef.current = game.day;
+      setDisplayGame(game);
+      setDisplayDay(game.day);
+      return undefined;
+    }
+    const startDay = displayDayRef.current;
+    const targetDay = game.day;
+    const startedAt = performance.now();
+    let frame = 0;
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / motionDurationMs);
+      const nextDay = startDay + (targetDay - startDay) * progress;
+      displayDayRef.current = nextDay;
+      setDisplayDay(nextDay);
+      if (progress < 1) {
+        frame = requestAnimationFrame(animate);
+        return;
+      }
+      displayGameRef.current = game;
+      setDisplayGame(game);
+    };
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [game, motionDurationMs]);
 
   useEffect(() => {
     setCamera({ centerX: 500, centerY: 350, zoom: 1 });
@@ -460,7 +500,7 @@ export function GalaxyMap({
               <g
                 key={ship.id}
                 className={`live-ship-marker ${ship.state}`}
-                style={{ transform: `translate(${ship.x}px, ${ship.y}px)`, transitionDuration: `${motionDurationMs}ms` }}
+                style={{ transform: `translate(${ship.x}px, ${ship.y}px)` }}
               >
                 <circle r="8" />
                 <path d="M 0 -6 L 5 5 L 0 2 L -5 5 Z" />
