@@ -212,6 +212,8 @@ export interface Route {
   assignedShips: number;
   /** 玩家所分配舰船的平均每班客舱容量。 */
   cabinCapacityByClass?: CabinConfiguration;
+  /** 玩家舰队按船龄修正后的平均舒适度。 */
+  effectiveComfort?: number;
   pricing: RoutePricing;
   maintenanceAllowanceHours: number;
   active: boolean;

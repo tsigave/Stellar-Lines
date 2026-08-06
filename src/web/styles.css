@@ -936,6 +936,8 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .maintenance-cost-summary > small { color: #887d6c; font-size: 12px; line-height: 1.45; }
 .top-policy { margin: 0; }
 .top-policy small { font-size: 12px; line-height: 1.5; }
+.fleet-policy-stack { display: grid; gap: 8px; }
+.fleet-policy-stack .auto-maintenance-policy { margin: 0; }
 .fleet-section { padding: 20px 22px 24px; }
 .fleet-section-heading { margin-bottom: 16px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .fleet-section-heading h2 { margin-top: 5px; font-size: 20px; }
@@ -962,6 +964,12 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .configuration-assignment label span { color: #bdd0d3; font-size: 13px; }
 .configuration-assignment label small { color: #71858d; font-size: 12px; }
 .configuration-assignment > button { width: 100%; min-height: 36px; margin-top: 8px; border: 1px solid rgba(112, 163, 177, 0.25); color: #bad0cd; background: rgba(17, 37, 49, 0.7); cursor: pointer; }
+.purchase-order-grid { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); gap: 8px; }
+.purchase-order-grid article { min-width: 0; padding: 12px; display: flex; flex-direction: column; gap: 7px; border: 1px solid rgba(111, 160, 170, 0.2); background: rgba(7, 18, 27, 0.7); }
+.purchase-order-grid article > div { display: flex; justify-content: space-between; gap: 10px; }
+.purchase-order-grid strong { color: #d3e4e5; font-size: 14px; }
+.purchase-order-grid span, .purchase-order-grid small { color: #748a92; font-size: 12px; }
+.purchase-order-grid em { color: var(--amber); font-size: 13px; font-style: normal; }
 .owned-fleet-grid, .ship-catalog-grid { display: grid; grid-template-columns: repeat(3, minmax(300px, 1fr)); gap: 12px; }
 .fleet-ship-card, .ship-catalog-card { min-width: 0; padding: 16px; border: 1px solid rgba(111, 160, 170, 0.18); background: rgba(7, 18, 27, 0.7); }
 .fleet-ship-card.due { border-color: rgba(242, 189, 105, 0.34); }
@@ -972,11 +980,16 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fleet-card-heading span, .catalog-card-heading span { color: #78909a; font-size: 12px; }
 .fleet-card-heading em { color: var(--teal); font-size: 12px; font-style: normal; }
 .catalog-card-heading em { flex: 0 0 auto; color: var(--amber); font-size: 14px; font-style: normal; }
+.catalog-card-heading em { display: flex; align-items: flex-end; flex-direction: column; gap: 2px; }
+.catalog-card-heading em s { color: #756e64; font-size: 12px; font-weight: 400; }
 .fleet-condition-row { margin-top: 13px; display: flex; justify-content: space-between; gap: 12px; color: #81969f; font-size: 12px; }
 .ship-configuration-summary { min-height: 68px; margin-top: 12px; padding: 9px 10px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); background: rgba(3, 12, 18, 0.54); }
 .ship-configuration-summary span { color: #71868e; font-size: 12px; }
 .ship-configuration-summary strong { color: #c7dadd; font-size: 14px; }
 .ship-configuration-summary small { color: #80969e; font-size: 12px; line-height: 1.45; }
+.ship-age-summary { margin-top: 8px; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--border); }
+.ship-age-summary span { min-height: 34px; padding: 6px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--border); color: #82979f; font-size: 12px; text-align: center; }
+.ship-age-summary span:last-child { border-right: 0; }
 .cabin-editor-heading { margin-top: 15px; display: flex; align-items: baseline; justify-content: space-between; }
 .cabin-editor-heading strong { font-size: 14px; }
 .cabin-editor-heading span { color: var(--teal); font-size: 12px; }
@@ -1002,9 +1015,31 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .ship-variant-menu button { min-width: 132px; min-height: 50px; padding: 7px 9px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; border: 1px solid rgba(111, 160, 170, 0.18); color: #b7cbce; background: rgba(11, 27, 38, 0.68); font-size: 14px; cursor: pointer; }
 .ship-variant-menu button:hover, .ship-variant-menu button.active { border-color: rgba(242, 189, 105, 0.45); color: #ffe2ac; background: rgba(72, 50, 22, 0.26); }
 .ship-variant-menu button small { color: #748890; font-size: 12px; }
+.purchase-agreement-cart { margin-top: 12px; padding: 14px; border: 1px solid rgba(242, 189, 105, 0.3); background: rgba(50, 34, 15, 0.22); }
+.purchase-agreement-heading, .purchase-agreement-total { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.purchase-agreement-heading > div { display: flex; flex-direction: column; gap: 3px; }
+.purchase-agreement-heading strong { color: #f0dfbd; font-size: 16px; }
+.purchase-agreement-heading span { color: #8e826e; font-size: 12px; }
+.purchase-agreement-heading em { color: var(--amber); font-size: 13px; font-style: normal; }
+.purchase-agreement-lines { margin-top: 10px; display: grid; gap: 5px; }
+.purchase-agreement-lines > div { min-height: 48px; padding: 7px 9px; display: grid; grid-template-columns: 1fr auto 64px; align-items: center; gap: 10px; border: 1px solid rgba(151, 125, 82, 0.2); background: rgba(8, 15, 20, 0.52); }
+.purchase-agreement-lines span { display: flex; flex-direction: column; gap: 3px; }
+.purchase-agreement-lines strong { color: #cbd8d7; font-size: 13px; }
+.purchase-agreement-lines small { color: #74868b; font-size: 12px; }
+.purchase-agreement-lines em { color: #d7c198; font-size: 13px; font-style: normal; }
+.purchase-agreement-lines button { min-height: 32px; border: 1px solid rgba(255, 124, 121, 0.24); color: #c99b98; background: transparent; cursor: pointer; }
+.purchase-agreement-total { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(151, 125, 82, 0.2); }
+.purchase-agreement-total > span { display: flex; align-items: baseline; gap: 10px; color: #8b8274; font-size: 12px; }
+.purchase-agreement-total s { color: #71695f; }
+.purchase-agreement-total strong { color: var(--amber); font-size: 16px; }
+.purchase-agreement-total button { min-width: 150px; min-height: 38px; border: 1px solid rgba(242, 189, 105, 0.45); color: #ffe5b6; background: rgba(121, 78, 25, 0.24); cursor: pointer; }
 .selected-ship-catalog { max-width: 920px; margin-top: 12px; }
 .selected-ship-catalog .ship-catalog-card { border-color: rgba(111, 160, 170, 0.3); }
 .ship-catalog-card > p:not(.sublight-explanation) { min-height: 48px; margin: 12px 0; color: #8ca0a8; font-size: 14px; line-height: 1.55; }
+.ship-market-status { margin: 11px 0; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid rgba(242, 189, 105, 0.18); }
+.ship-market-status span { min-height: 42px; padding: 7px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border-right: 1px solid rgba(242, 189, 105, 0.14); color: #7e7568; font-size: 12px; }
+.ship-market-status span:last-child { border-right: 0; }
+.ship-market-status strong { color: #d9c49c; font-size: 13px; }
 .ship-spec-grid { display: grid; grid-template-columns: repeat(2, 1fr); border: 1px solid var(--border); }
 .ship-spec-grid div { min-height: 58px; padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .ship-spec-grid div:nth-child(2n) { border-right: 0; }
@@ -1024,7 +1059,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fuel-curve-table > div:not(.fuel-curve-heading) small { color: #667d85; font-size: 12px; }
 .fuel-curve-table strong { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: #bfe4de; font-size: 13px; font-weight: 600; }
 .fuel-curve-table strong small { color: #71878e; font-size: 12px; font-weight: 400; }
-.purchase-row { margin-top: 13px; display: grid; grid-template-columns: 88px minmax(110px, 1fr) 86px; align-items: end; gap: 8px; }
+.purchase-row { margin-top: 13px; display: grid; grid-template-columns: 96px minmax(130px, 1fr) 124px; align-items: end; gap: 8px; }
 .purchase-row label, .purchase-row > div { display: flex; flex-direction: column; gap: 5px; color: #81959d; font-size: 12px; }
 .purchase-row input { height: 37px; font-size: 14px; }
 .purchase-row strong { color: var(--amber); font-size: 14px; }
@@ -1048,6 +1083,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .fleet-overview .top-policy { grid-column: 1 / -1; }
   .configuration-grid { grid-template-columns: 1fr; }
   .ship-family-menu { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+  .purchase-order-grid { grid-template-columns: repeat(2, minmax(250px, 1fr)); }
   .owned-fleet-grid, .ship-catalog-grid { grid-template-columns: repeat(2, minmax(280px, 1fr)); }
 }
 
@@ -1079,6 +1115,15 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .ship-variant-menu { align-items: stretch; flex-direction: column; overflow: visible; }
   .ship-variant-menu > span { min-width: 0; }
   .ship-variant-menu button { width: 100%; }
+  .purchase-order-grid { grid-template-columns: 1fr; }
+  .purchase-agreement-heading, .purchase-agreement-total { align-items: stretch; flex-direction: column; }
+  .purchase-agreement-lines > div { grid-template-columns: 1fr auto; }
+  .purchase-agreement-lines button { grid-column: 1 / -1; }
+  .purchase-agreement-total > span { align-items: flex-start; flex-direction: column; }
+  .purchase-agreement-total button { width: 100%; }
+  .ship-market-status { grid-template-columns: 1fr; }
+  .ship-market-status span { border-right: 0; border-bottom: 1px solid rgba(242, 189, 105, 0.14); }
+  .ship-market-status span:last-child { border-bottom: 0; }
   .cabin-editor { grid-template-columns: 1fr; }
   .cabin-editor label { grid-template-columns: 1fr auto; }
   .app-shell { padding-bottom: 104px; }

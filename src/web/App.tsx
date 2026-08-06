@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   advanceGameDay,
   adjustPlayerRouteFare,
-  buyShip,
   closePlayerRoute,
   assignShipsToFleetConfiguration,
   createFleetConfiguration,
@@ -14,7 +13,9 @@ import {
   gameScenario,
   isGameState,
   performShipMaintenance,
+  placeShipPurchaseAgreement,
   setAutoMaintenanceThreshold,
+  setAutoSellAge,
   updateFleetConfiguration,
   simulateCampaign,
   togglePlayerRoute,
@@ -50,7 +51,7 @@ function createSession(
   if (!base) throw new Error("可玩星域至少需要两个有人星球");
   return {
     generated,
-    game: createNewGame(config, generated.galaxy, base),
+    game: createNewGame(config, generated.galaxy, base, generated.scenario.shipTypes),
     restored,
   };
 }
@@ -148,7 +149,7 @@ export function App() {
       if (!newGamePreview) throw new Error("请先提供有效的银河配置");
       const next: GameSession = {
         generated: newGamePreview,
-        game: createNewGame(config, newGamePreview.galaxy, draftBasePortId),
+        game: createNewGame(config, newGamePreview.galaxy, draftBasePortId, newGamePreview.scenario.shipTypes),
         restored: true,
       };
       setSession(next);
@@ -197,12 +198,13 @@ export function App() {
         <FleetPanel
           game={game}
           shipTypes={generated.scenario.shipTypes}
-          onBuyShips={(shipTypeId, quantity) => commit(() => buyShip(game, shipTypeId, generated.scenario.shipTypes, quantity))}
+          onPlacePurchaseAgreement={(lines) => commit(() => placeShipPurchaseAgreement(game, lines, generated.scenario.shipTypes))}
           onCreateConfiguration={(shipTypeId, name, cabins) => commit(() => createFleetConfiguration(game, shipTypeId, name, cabins, generated.scenario.shipTypes))}
           onUpdateConfiguration={(configurationId, name, cabins) => commit(() => updateFleetConfiguration(game, configurationId, name, cabins, generated.scenario.shipTypes))}
           onAssignShips={(configurationId, shipIds) => commit(() => assignShipsToFleetConfiguration(game, configurationId, shipIds))}
           onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
           onAutoMaintenanceThresholdChange={(threshold) => commit(() => setAutoMaintenanceThreshold(game, threshold))}
+          onAutoSellAgeChange={(ageYears) => commit(() => setAutoSellAge(game, ageYears))}
         />
       ) : (
         <main className="workspace">

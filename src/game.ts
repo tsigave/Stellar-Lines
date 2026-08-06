@@ -1,6 +1,7 @@
 import { simulateCampaign } from "./campaign.js";
 import { applyEventsToPorts } from "./events.js";
 import { buildRouteServices } from "./routes.js";
+import { createRandom } from "./generation/random.js";
 import type {
   CabinConfiguration,
   CampaignDay,
@@ -15,7 +16,7 @@ import type {
   WorldLeg,
 } from "./types.js";
 
-export const GAME_STATE_VERSION = 6;
+export const GAME_STATE_VERSION = 7;
 export const STARTING_CASH = 3_000_000;
 export const ROUTE_OPENING_COST = 25_000;
 export const DAILY_COMPANY_OVERHEAD = 700;
@@ -33,6 +34,9 @@ export const MAINTENANCE_REQUIRED_HOURS = 4_200;
 export const CONDITION_WEAR_PER_FLIGHT_HOUR = 0.00625;
 export const MAINTENANCE_DAYS = 3;
 export const DEFAULT_AUTO_MAINTENANCE_THRESHOLD = 80;
+export const DAYS_PER_SHIP_YEAR = 360;
+export const SHIP_AGE_MAINTENANCE_RATE = 0.06;
+export const SHIP_AGE_COMFORT_LOSS_PER_YEAR = 1.5;
 
 export type PlayerRoutingMode = Extract<TravelMode, "warp" | "hyperspace">;
 export type ShipMaintenanceState = "ready" | "due" | "required" | "maintenance";
@@ -46,6 +50,33 @@ export interface OwnedShip {
   flightHoursSinceMaintenance: number;
   maintenanceUntilDay: number | null;
   configurationId: string | null;
+  commissionedDay: number;
+  purchasePricePaid: number;
+}
+
+export interface ShipyardMarketOffer {
+  shipTypeId: string;
+  popularity: number;
+  discountRate: number;
+  inventory: number;
+  updatedDay: number;
+}
+
+export interface ShipPurchaseOrder {
+  id: string;
+  agreementId: string;
+  shipTypeId: string;
+  quantity: number;
+  unitPrice: number;
+  marketDiscountRate: number;
+  agreementDiscountRate: number;
+  orderedDay: number;
+  deliveryDay: number;
+}
+
+export interface ShipPurchaseLineInput {
+  shipTypeId: string;
+  quantity: number;
 }
 
 export interface FleetConfiguration {
@@ -74,6 +105,125 @@ export function fleetConfigurationForShip(
   return ship.configurationId
     ? state.fleetConfigurations.find((configuration) => configuration.id === ship.configurationId)
     : undefined;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+export function shipAgeYears(ship: OwnedShip, day: number): number {
+  return Math.max(0, day - ship.commissionedDay) / DAYS_PER_SHIP_YEAR;
+}
+
+export function shipComfortAtAge(ship: OwnedShip, shipType: ShipType, day: number): number {
+  return Math.max(35, shipType.comfort - shipAgeYears(ship, day) * SHIP_AGE_COMFORT_LOSS_PER_YEAR);
+}
+
+export function shipResaleValue(ship: OwnedShip, shipType: ShipType, day: number): number {
+  const ageValue = Math.max(0.12, 0.68 - shipAgeYears(ship, day) * 0.045);
+  const conditionValue = 0.55 + clamp(ship.condition, 0, 100) / 100 * 0.45;
+  return Math.round(shipType.purchasePrice * ageValue * conditionValue);
+}
+
+function marketOffer(seed: string, shipTypeId: string, day: number): ShipyardMarketOffer {
+  const random = createRandom(`${seed}:shipyard:${shipTypeId}:${Math.floor(day / 7)}`);
+  const popularity = Number((0.18 + random.next() * 0.78).toFixed(4));
+  const clearanceChance = 0.16 + (1 - popularity) * 0.58;
+  const discountRate = random.next() < clearanceChance
+    ? Number(clamp(0.04 + (1 - popularity) * 0.18 + random.next() * 0.06, 0, 0.28).toFixed(2))
+    : 0;
+  const inventory = random.next() < 0.1 + (1 - popularity) * 0.62
+    ? random.integer(1, popularity < 0.4 ? 4 : 2)
+    : 0;
+  return { shipTypeId, popularity, discountRate, inventory, updatedDay: day };
+}
+
+export function createShipyardMarket(
+  seed: string,
+  shipTypes: readonly ShipType[],
+  day = 1,
+): ShipyardMarketOffer[] {
+  return shipTypes.map((shipType) => marketOffer(seed, shipType.id, day));
+}
+
+export function shipyardOfferFor(
+  state: Pick<GameState, "config" | "day" | "shipyardMarket">,
+  shipType: ShipType,
+): ShipyardMarketOffer {
+  return state.shipyardMarket.find((offer) => offer.shipTypeId === shipType.id) ??
+    marketOffer(state.config.seed, shipType.id, state.day);
+}
+
+export function purchaseAgreementDiscount(totalShips: number): number {
+  if (totalShips >= 15) return 0.1;
+  if (totalShips >= 10) return 0.08;
+  if (totalShips >= 6) return 0.06;
+  if (totalShips >= 4) return 0.04;
+  if (totalShips >= 2) return 0.02;
+  return 0;
+}
+
+export interface ShipPurchaseAgreementQuoteLine extends ShipPurchaseLineInput {
+  listUnitPrice: number;
+  unitPrice: number;
+  marketDiscountRate: number;
+  agreementDiscountRate: number;
+  inventoryUsed: number;
+  deliveryDay: number;
+}
+
+export interface ShipPurchaseAgreementQuote {
+  lines: readonly ShipPurchaseAgreementQuoteLine[];
+  totalShips: number;
+  listPrice: number;
+  totalPrice: number;
+  agreementDiscountRate: number;
+}
+
+export function quoteShipPurchaseAgreement(
+  state: GameState,
+  requestedLines: readonly ShipPurchaseLineInput[],
+  shipTypes: readonly ShipType[],
+): ShipPurchaseAgreementQuote {
+  const quantitiesByType = new Map<string, number>();
+  for (const line of requestedLines) {
+    quantitiesByType.set(line.shipTypeId, (quantitiesByType.get(line.shipTypeId) ?? 0) + line.quantity);
+  }
+  const lines = [...quantitiesByType].map(([shipTypeId, quantity]) => ({ shipTypeId, quantity }))
+    .filter((line) => line.quantity > 0);
+  const totalShips = lines.reduce((sum, line) => sum + line.quantity, 0);
+  if (totalShips < 1 || totalShips > 60) throw new Error("单份采购协议必须包含 1 至 60 艘舰船");
+  const agreementDiscountRate = purchaseAgreementDiscount(totalShips);
+  const quotedLines = lines.map((line) => {
+    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 20) {
+      throw new Error("每个型号的采购数量必须是 1 至 20 艘");
+    }
+    const shipType = shipTypes.find((candidate) => candidate.id === line.shipTypeId);
+    if (!shipType) throw new Error("采购协议包含未知船型");
+    const offer = shipyardOfferFor(state, shipType);
+    const inventoryUsed = Math.min(offer.inventory, line.quantity);
+    const factoryQuantity = line.quantity - inventoryUsed;
+    const manufacturingDays = factoryQuantity === 0
+      ? 1
+      : Math.ceil(8 + shipType.structuralMassTonnes / 95 + offer.popularity * 32 + factoryQuantity * 1.6);
+    const unitPrice = Math.round(shipType.purchasePrice * (1 - offer.discountRate) * (1 - agreementDiscountRate));
+    return {
+      ...line,
+      listUnitPrice: shipType.purchasePrice,
+      unitPrice,
+      marketDiscountRate: offer.discountRate,
+      agreementDiscountRate,
+      inventoryUsed,
+      deliveryDay: state.day + manufacturingDays,
+    };
+  });
+  return {
+    lines: quotedLines,
+    totalShips,
+    listPrice: quotedLines.reduce((sum, line) => sum + line.listUnitPrice * line.quantity, 0),
+    totalPrice: quotedLines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0),
+    agreementDiscountRate,
+  };
 }
 
 export interface FuelPriceRecord {
@@ -116,15 +266,19 @@ export interface GameState {
   basePortId: string;
   fleet: readonly OwnedShip[];
   fleetConfigurations: readonly FleetConfiguration[];
+  shipyardMarket: readonly ShipyardMarketOffer[];
+  shipPurchaseOrders: readonly ShipPurchaseOrder[];
   routes: readonly Route[];
   history: readonly GameDayRecord[];
   fuelMarket: readonly FuelPriceRecord[];
   nextShipNumber: number;
   nextFleetConfigurationNumber: number;
+  nextPurchaseAgreementNumber: number;
   nextRouteNumber: number;
   status: GameStatus;
   primaryGoalCompletedOnDay: number | null;
   autoMaintenanceThreshold: number;
+  autoSellAgeYears: number | null;
 }
 
 export interface CreateRouteInput {
@@ -289,7 +443,7 @@ function shipsForRoute(state: GameState, routeId: string): OwnedShip[] {
   return state.fleet.filter((ship) => ship.routeId === routeId);
 }
 
-function operationalPlayerRoutes(state: GameState): Route[] {
+function operationalPlayerRoutes(state: GameState, shipTypes: readonly ShipType[]): Route[] {
   return state.routes.flatMap((route) => {
     if (!route.active) return [];
     const availableShips = shipsForRoute(state, route.id).filter((ship) => {
@@ -299,6 +453,7 @@ function operationalPlayerRoutes(state: GameState): Route[] {
     });
     if (availableShips.length === 0) return [];
     const configurations = availableShips.map((ship) => fleetConfigurationForShip(state, ship)!);
+    const shipType = shipTypes.find((candidate) => candidate.id === route.shipTypeId);
     const cabinCapacityByClass: CabinConfiguration = {
       economy: configurations.reduce((sum, configuration) => sum + configuration.cabins.economy, 0) / availableShips.length,
       business: configurations.reduce((sum, configuration) => sum + configuration.cabins.business, 0) / availableShips.length,
@@ -308,6 +463,12 @@ function operationalPlayerRoutes(state: GameState): Route[] {
       ...route,
       assignedShips: availableShips.length,
       cabinCapacityByClass,
+      ...(shipType ? {
+        effectiveComfort: availableShips.reduce(
+          (sum, ship) => sum + shipComfortAtAge(ship, shipType, state.day),
+          0,
+        ) / availableShips.length,
+      } : {}),
     }];
   });
 }
@@ -316,6 +477,7 @@ export function createNewGame(
   config: GalaxyGenerationConfig,
   galaxy: GeneratedGalaxy,
   basePortId: string,
+  shipTypes: readonly ShipType[] = [],
 ): GameState {
   const basePort = galaxy.ports.find((port) => port.id === basePortId);
   if (!basePort) throw new Error("请选择一个有效的基地星球");
@@ -336,18 +498,24 @@ export function createNewGame(
         flightHoursSinceMaintenance: 0,
         maintenanceUntilDay: null,
         configurationId: null,
+        commissionedDay: 1,
+        purchasePricePaid: shipTypes.find((shipType) => shipType.id === "meridian-liner")?.purchasePrice ?? 2_200_000,
       },
     ],
     fleetConfigurations: [],
+    shipyardMarket: createShipyardMarket(config.seed, shipTypes),
+    shipPurchaseOrders: [],
     routes: [],
     history: [],
     fuelMarket: [fuelPriceRecord(galaxy, 1)],
     nextShipNumber: 2,
     nextFleetConfigurationNumber: 1,
+    nextPurchaseAgreementNumber: 1,
     nextRouteNumber: 1,
     status: "playing",
     primaryGoalCompletedOnDay: null,
     autoMaintenanceThreshold: DEFAULT_AUTO_MAINTENANCE_THRESHOLD,
+    autoSellAgeYears: null,
   };
 }
 
@@ -367,10 +535,13 @@ export function isGameState(value: unknown): value is GameState {
         typeof (ship as Partial<OwnedShip>).configurationId === "string")
     ) &&
     Array.isArray(candidate.fleetConfigurations) &&
+    Array.isArray(candidate.shipyardMarket) &&
+    Array.isArray(candidate.shipPurchaseOrders) &&
     Array.isArray(candidate.routes) &&
     Array.isArray(candidate.history) &&
     Array.isArray(candidate.fuelMarket) &&
-    typeof candidate.autoMaintenanceThreshold === "number"
+    typeof candidate.autoMaintenanceThreshold === "number" &&
+    (candidate.autoSellAgeYears === null || typeof candidate.autoSellAgeYears === "number")
   );
 }
 
@@ -389,7 +560,7 @@ export function gameScenario(
     worldLegs: gameWorldLegs(galaxy),
     routes: [
       ...baseScenario.routes.filter((route) => route.companyId !== "player"),
-      ...operationalPlayerRoutes(state),
+      ...operationalPlayerRoutes(state, baseScenario.shipTypes),
     ],
     shipConditionByRoute: Object.fromEntries(state.routes.map((route) => {
       const ships = shipsForRoute(state, route.id);
@@ -412,36 +583,43 @@ export function buyShip(
   shipTypes: readonly ShipType[],
   quantity = 1,
 ): GameActionResult {
+  return placeShipPurchaseAgreement(state, [{ shipTypeId, quantity }], shipTypes);
+}
+
+export function placeShipPurchaseAgreement(
+  state: GameState,
+  lines: readonly ShipPurchaseLineInput[],
+  shipTypes: readonly ShipType[],
+): GameActionResult {
   requirePlaying(state);
-  const shipType = shipTypes.find((candidate) => candidate.id === shipTypeId);
-  if (!shipType) throw new Error("未知船型");
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
-    throw new Error("单次购买数量必须是 1 至 20 艘");
-  }
-  const totalPrice = shipType.purchasePrice * quantity;
-  if (state.cash < totalPrice) throw new Error("资金不足，无法购买所选舰船");
-  const number = state.nextShipNumber;
-  const purchasedShips: OwnedShip[] = Array.from({ length: quantity }, (_, index) => {
-    const shipNumber = number + index;
-    return {
-      id: `ship-${shipNumber}`,
-      name: `${shipType.name} ${shipNumber.toString().padStart(2, "0")}`,
-      shipTypeId,
-      routeId: null,
-      condition: 100,
-      flightHoursSinceMaintenance: 0,
-      maintenanceUntilDay: null,
-      configurationId: null,
-    };
-  });
+  const quote = quoteShipPurchaseAgreement(state, lines, shipTypes);
+  if (state.cash < quote.totalPrice) throw new Error("资金不足，无法签订所选采购协议");
+  const agreementNumber = state.nextPurchaseAgreementNumber;
+  const agreementId = `purchase-${agreementNumber}`;
+  const orders: ShipPurchaseOrder[] = quote.lines.map((line, index) => ({
+    id: `${agreementId}-${index + 1}`,
+    agreementId,
+    shipTypeId: line.shipTypeId,
+    quantity: line.quantity,
+    unitPrice: line.unitPrice,
+    marketDiscountRate: line.marketDiscountRate,
+    agreementDiscountRate: line.agreementDiscountRate,
+    orderedDay: state.day,
+    deliveryDay: line.deliveryDay,
+  }));
+  const inventoryByType = new Map(quote.lines.map((line) => [line.shipTypeId, line.inventoryUsed]));
   return {
     state: {
       ...state,
-      cash: state.cash - totalPrice,
-      fleet: [...state.fleet, ...purchasedShips],
-      nextShipNumber: number + quantity,
+      cash: state.cash - quote.totalPrice,
+      shipPurchaseOrders: [...state.shipPurchaseOrders, ...orders],
+      shipyardMarket: shipTypes.map((shipType) => {
+        const offer = shipyardOfferFor(state, shipType);
+        return { ...offer, inventory: Math.max(0, offer.inventory - (inventoryByType.get(shipType.id) ?? 0)) };
+      }),
+      nextPurchaseAgreementNumber: agreementNumber + 1,
     },
-    message: `已购买 ${shipType.name} × ${quantity}；新船为空舱，请先配置舱位`,
+    message: `已签订 ${quote.totalShips} 艘舰船采购协议，合同优惠 ${(quote.agreementDiscountRate * 100).toFixed(0)}%；将按各型号交期交付`,
   };
 }
 
@@ -708,6 +886,127 @@ export function setAutoMaintenanceThreshold(
   };
 }
 
+export function setAutoSellAge(
+  state: GameState,
+  ageYears: number | null,
+): GameActionResult {
+  requirePlaying(state);
+  const normalized = ageYears === null ? null : clamp(Math.round(ageYears), 1, 30);
+  return {
+    state: { ...state, autoSellAgeYears: normalized },
+    message: normalized === null
+      ? "已关闭按船龄自动出售"
+      : `舰船达到 ${normalized} 年船龄后将自动出售`,
+  };
+}
+
+export function deliverShipPurchaseOrders(
+  state: GameState,
+  shipTypes: readonly ShipType[],
+  throughDay = state.day,
+): GameActionResult {
+  const dueOrders = state.shipPurchaseOrders.filter((order) => order.deliveryDay <= throughDay);
+  if (dueOrders.length === 0) return { state, message: "今日没有待交付舰船" };
+  let nextShipNumber = state.nextShipNumber;
+  const deliveredShips: OwnedShip[] = [];
+  for (const order of dueOrders) {
+    const shipType = shipTypes.find((candidate) => candidate.id === order.shipTypeId);
+    if (!shipType) continue;
+    for (let index = 0; index < order.quantity; index += 1) {
+      const shipNumber = nextShipNumber++;
+      deliveredShips.push({
+        id: `ship-${shipNumber}`,
+        name: `${shipType.name} ${shipNumber.toString().padStart(2, "0")}`,
+        shipTypeId: shipType.id,
+        routeId: null,
+        condition: 100,
+        flightHoursSinceMaintenance: 0,
+        maintenanceUntilDay: null,
+        configurationId: null,
+        commissionedDay: throughDay,
+        purchasePricePaid: order.unitPrice,
+      });
+    }
+  }
+  const dueIds = new Set(dueOrders.map((order) => order.id));
+  return {
+    state: {
+      ...state,
+      fleet: [...state.fleet, ...deliveredShips],
+      shipPurchaseOrders: state.shipPurchaseOrders.filter((order) => !dueIds.has(order.id)),
+      nextShipNumber,
+    },
+    message: `船厂已交付 ${deliveredShips.length} 艘舰船；新船为空舱，请先分配统一配置方案`,
+  };
+}
+
+function refreshShipyardMarket(
+  state: GameState,
+  shipTypes: readonly ShipType[],
+  nextDay: number,
+): ShipyardMarketOffer[] {
+  return shipTypes.map((shipType) => {
+    const current = shipyardOfferFor(state, shipType);
+    const dailyRandom = createRandom(`${state.config.seed}:shipyard-trend:${shipType.id}:${nextDay}`);
+    const popularity = Number(clamp(
+      current.popularity + (dailyRandom.next() - 0.5) * 0.024 + (0.52 - current.popularity) * 0.004,
+      0.08,
+      0.98,
+    ).toFixed(4));
+    if (nextDay % 7 !== 0) return { ...current, popularity, updatedDay: nextDay };
+    const clearanceChance = 0.12 + (1 - popularity) * 0.64;
+    const discountRate = dailyRandom.next() < clearanceChance
+      ? Number(clamp(0.03 + (1 - popularity) * 0.2 + dailyRandom.next() * 0.06, 0, 0.3).toFixed(2))
+      : 0;
+    const replenishment = dailyRandom.next() < 0.08 + (1 - popularity) * 0.56
+      ? dailyRandom.integer(1, popularity < 0.4 ? 3 : 1)
+      : 0;
+    return {
+      ...current,
+      popularity,
+      discountRate,
+      inventory: Math.min(5, current.inventory + replenishment),
+      updatedDay: nextDay,
+    };
+  });
+}
+
+function applyAutoSellByAge(
+  state: GameState,
+  fleet: readonly OwnedShip[],
+  routes: readonly Route[],
+  day: number,
+  cash: number,
+  shipTypes: readonly ShipType[],
+): { fleet: OwnedShip[]; routes: Route[]; cash: number; soldShipNames: string[]; revenue: number } {
+  if (state.autoSellAgeYears === null) {
+    return { fleet: [...fleet], routes: [...routes], cash, soldShipNames: [], revenue: 0 };
+  }
+  const sold = fleet.filter((ship) =>
+    ship.maintenanceUntilDay === null && shipAgeYears(ship, day) >= state.autoSellAgeYears!,
+  );
+  if (sold.length === 0) {
+    return { fleet: [...fleet], routes: [...routes], cash, soldShipNames: [], revenue: 0 };
+  }
+  const soldIds = new Set(sold.map((ship) => ship.id));
+  const remainingFleet = fleet.filter((ship) => !soldIds.has(ship.id));
+  const revenue = sold.reduce((sum, ship) => {
+    const shipType = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
+    return sum + (shipType ? shipResaleValue(ship, shipType, day) : 0);
+  }, 0);
+  const nextRoutes = routes.map((route) => {
+    const assignedShips = remainingFleet.filter((ship) => ship.routeId === route.id).length;
+    return { ...route, assignedShips, active: assignedShips > 0 ? route.active : false };
+  });
+  return {
+    fleet: remainingFleet,
+    routes: nextRoutes,
+    cash: cash + revenue,
+    soldShipNames: sold.map((ship) => ship.name),
+    revenue,
+  };
+}
+
 export function togglePlayerRoute(state: GameState, routeId: string): GameActionResult {
   requirePlaying(state);
   const route = state.routes.find((candidate) => candidate.id === routeId);
@@ -884,11 +1183,13 @@ export interface FleetFixedMaintenanceSummary {
   undiscountedTotal: number;
   supplierDiscount: number;
   familyDiscount: number;
+  ageSurcharge: number;
 }
 
 export function fleetFixedMaintenanceCost(
   fleet: readonly OwnedShip[],
   shipTypes: readonly ShipType[],
+  currentDay = 1,
 ): FleetFixedMaintenanceSummary {
   const typeById = new Map(shipTypes.map((shipType) => [shipType.id, shipType]));
   const supplierCounts = new Map<string, number>();
@@ -903,15 +1204,18 @@ export function fleetFixedMaintenanceCost(
   let undiscountedTotal = 0;
   let supplierSavings = 0;
   let familySavings = 0;
+  let ageSurcharge = 0;
   for (const ship of fleet) {
     const type = typeById.get(ship.shipTypeId);
     if (!type) continue;
-    const base = type.fixedMaintenanceCostPerDay;
+    const originalBase = type.fixedMaintenanceCostPerDay;
+    const base = originalBase * (1 + shipAgeYears(ship, currentDay) * SHIP_AGE_MAINTENANCE_RATE);
     const supplierDiscount = Math.min(0.18, Math.max(0, (supplierCounts.get(type.manufacturer) ?? 1) - 1) * 0.015);
     const familyDiscount = Math.min(0.22, Math.max(0, (familyCounts.get(type.familyId) ?? 1) - 1) * 0.025);
     const afterSupplier = base * (1 - supplierDiscount);
     const discounted = afterSupplier * (1 - familyDiscount);
     undiscountedTotal += base;
+    ageSurcharge += base - originalBase;
     supplierSavings += base - afterSupplier;
     familySavings += afterSupplier - discounted;
     total += discounted;
@@ -921,6 +1225,7 @@ export function fleetFixedMaintenanceCost(
     undiscountedTotal: Number(undiscountedTotal.toFixed(2)),
     supplierDiscount: Number(supplierSavings.toFixed(2)),
     familyDiscount: Number(familySavings.toFixed(2)),
+    ageSurcharge: Number(ageSurcharge.toFixed(2)),
   };
 }
 
@@ -940,7 +1245,7 @@ export function advanceGameDay(
   );
   const revenue = company?.ticketRevenue ?? 0;
   const operatingCost = company?.operatingCost ?? 0;
-  const fixedMaintenance = fleetFixedMaintenanceCost(state.fleet, baseScenario.shipTypes);
+  const fixedMaintenance = fleetFixedMaintenanceCost(state.fleet, baseScenario.shipTypes, state.day);
   const overhead = DAILY_COMPANY_OVERHEAD + fixedMaintenance.total;
   const profit = revenue - operatingCost - overhead;
   const cash = state.cash + profit;
@@ -948,13 +1253,6 @@ export function advanceGameDay(
   const totalPassengers =
     state.history.reduce((sum, record) => sum + record.passengers, 0) + passengers;
   const nextDay = state.day + 1;
-  const justCompletedGoal =
-    state.primaryGoalCompletedOnDay === null &&
-    (cash >= CASH_GOAL || totalPassengers >= PASSENGER_GOAL);
-  const primaryGoalCompletedOnDay = justCompletedGoal
-    ? state.day
-    : state.primaryGoalCompletedOnDay;
-  const lost = cash < 0 || (primaryGoalCompletedOnDay === null && nextDay >= DEADLINE_DAY);
   const agedFleet = ageFleetAfterDay(state, scenario);
   const automaticMaintenance = applyAutomaticMaintenance(
     agedFleet,
@@ -965,14 +1263,36 @@ export function advanceGameDay(
     state.autoMaintenanceThreshold,
     baseScenario.shipTypes,
   );
-  const finalCash = automaticMaintenance.cash;
+  const delivery = deliverShipPurchaseOrders({
+    ...state,
+    day: nextDay,
+    cash: automaticMaintenance.cash,
+    fleet: automaticMaintenance.fleet,
+  }, baseScenario.shipTypes, nextDay);
+  const deliveredCount = delivery.state.fleet.length - automaticMaintenance.fleet.length;
+  const automaticSale = applyAutoSellByAge(
+    state,
+    delivery.state.fleet,
+    state.routes,
+    nextDay,
+    delivery.state.cash,
+    baseScenario.shipTypes,
+  );
+  const finalCash = automaticSale.cash;
+  const justCompletedGoal =
+    state.primaryGoalCompletedOnDay === null &&
+    (finalCash >= CASH_GOAL || totalPassengers >= PASSENGER_GOAL);
+  const primaryGoalCompletedOnDay = justCompletedGoal
+    ? state.day
+    : state.primaryGoalCompletedOnDay;
+  const lost = finalCash < 0 || (primaryGoalCompletedOnDay === null && nextDay >= DEADLINE_DAY);
   const record: GameDayRecord = {
     day: state.day,
     cash: finalCash,
     revenue,
     operatingCost,
     overhead,
-    profit: profit - automaticMaintenance.cost,
+    profit: profit - automaticMaintenance.cost + automaticSale.revenue,
     passengers,
     activeEventIds: campaignDay.activeEventIds,
     announcedEventIds: campaignDay.announcedEventIds,
@@ -983,13 +1303,21 @@ export function advanceGameDay(
       ...state,
       day: nextDay,
       cash: finalCash,
-      fleet: automaticMaintenance.fleet,
+      fleet: automaticSale.fleet,
+      routes: automaticSale.routes,
+      shipPurchaseOrders: delivery.state.shipPurchaseOrders,
+      nextShipNumber: delivery.state.nextShipNumber,
+      shipyardMarket: refreshShipyardMarket(state, baseScenario.shipTypes, nextDay),
       history: [...state.history, record].slice(-365),
       fuelMarket: [...state.fuelMarket, fuelPriceRecord(galaxy, nextDay)].slice(-365),
-      status: finalCash < 0 || lost ? "lost" : "playing",
+      status: lost ? "lost" : "playing",
       primaryGoalCompletedOnDay,
     },
-    message: automaticMaintenance.maintainedShipNames.length > 0
+    message: automaticSale.soldShipNames.length > 0
+      ? `已按船龄策略出售 ${automaticSale.soldShipNames.length} 艘舰船，回收 ${automaticSale.revenue.toFixed(0)} Cr。`
+      : deliveredCount > 0
+      ? `船厂今日交付 ${deliveredCount} 艘舰船；请为新船分配统一配置方案。`
+      : automaticMaintenance.maintainedShipNames.length > 0
       ? `${automaticMaintenance.maintainedShipNames.join("、")} 返抵主基地，维护值已低于 ${state.autoMaintenanceThreshold}% 阈值并自动进场维护。`
       : justCompletedGoal
       ? "初级经营目标达成！公司进入自由经营阶段，游戏将继续进行。"
