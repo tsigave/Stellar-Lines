@@ -3,6 +3,7 @@ import {
   CABIN_SPACE_PER_SEAT,
   cabinSpaceUsed,
   estimateFuelConsumption,
+  FIXED_MAINTENANCE_COST_SCALE,
   fleetConfigurationForShip,
   fleetFixedMaintenanceCost,
   quoteShipPurchaseAgreement,
@@ -39,7 +40,7 @@ interface FleetPanelProps {
   onAssignShips: (configurationId: string, shipIds: readonly string[]) => void;
   onMaintainShip: (shipId: string) => void;
   onAutoMaintenanceThresholdChange: (threshold: number) => void;
-  onAutoSellAgeChange: (ageYears: number | null) => void;
+  onAutoReplacementAgeChange: (ageYears: number | null) => void;
 }
 
 const MODE_LABELS: Record<TravelMode, string> = {
@@ -235,7 +236,7 @@ export function FleetPanel({
   onAssignShips,
   onMaintainShip,
   onAutoMaintenanceThresholdChange,
-  onAutoSellAgeChange,
+  onAutoReplacementAgeChange,
 }: FleetPanelProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [purchaseCart, setPurchaseCart] = useState<Record<string, number>>({});
@@ -286,9 +287,9 @@ export function FleetPanel({
             </select>
           </div>
           <div className="auto-maintenance-policy">
-            <label htmlFor="auto-sell-age">按船龄自动出售</label>
-            <select id="auto-sell-age" value={game.autoSellAgeYears ?? "never"} onChange={(event) => onAutoSellAgeChange(event.target.value === "never" ? null : Number(event.target.value))}>
-              <option value="never">永不自动出售</option>
+            <label htmlFor="auto-replacement-age">按船龄自动更新</label>
+            <select id="auto-replacement-age" value={game.autoReplacementAgeYears ?? "never"} onChange={(event) => onAutoReplacementAgeChange(event.target.value === "never" ? null : Number(event.target.value))}>
+              <option value="never">永不自动更新</option>
               {[1, 2, 3, 5, 8, 10, 15, 20].map((age) => <option key={age} value={age}>{age} 年</option>)}
             </select>
           </div>
@@ -301,7 +302,7 @@ export function FleetPanel({
           ? <div className="fleet-empty-callout"><p>当前没有待交付采购订单。</p></div>
           : <div className="purchase-order-grid">{game.shipPurchaseOrders.map((order) => {
             const type = shipTypes.find((candidate) => candidate.id === order.shipTypeId);
-            return <article key={order.id}><div><strong>{type?.name ?? order.shipTypeId} × {order.quantity}</strong><span>{order.agreementId}</span></div><em>第 {order.deliveryDay} 日交付 · 还需 {Math.max(0, order.deliveryDay - game.day)} 日</em><small>成交单价 {formatCredits(order.unitPrice)} · 行情优惠 {(order.marketDiscountRate * 100).toFixed(0)}% · 协议优惠 {(order.agreementDiscountRate * 100).toFixed(0)}%</small></article>;
+            return <article key={order.id}><div><strong>{type?.name ?? order.shipTypeId} × {order.quantity}</strong><span>{order.replacementShipIds?.length ? `自动更新 · 接替 ${order.replacementShipIds.length} 艘旧船` : order.agreementId}</span></div><em>第 {order.deliveryDay} 日交付 · 还需 {Math.max(0, order.deliveryDay - game.day)} 日</em><small>成交单价 {formatCredits(order.unitPrice)} · 行情优惠 {(order.marketDiscountRate * 100).toFixed(0)}% · 协议优惠 {(order.agreementDiscountRate * 100).toFixed(0)}%</small></article>;
           })}</div>}
       </section>
 
@@ -376,7 +377,7 @@ export function FleetPanel({
                 <div><span>结构质量</span><strong>{type.structuralMassTonnes.toLocaleString()} 吨</strong></div>
                 <div><span>燃料容量</span><strong>{type.fuelCapacityTonnes.toLocaleString()} 吨</strong></div>
                 <div><span>客舱空间</span><strong>{type.cabinSpace} 单位</strong></div>
-                <div><span>固定维护</span><strong>{formatCredits(type.fixedMaintenanceCostPerDay)} / 日</strong></div>
+                <div><span>固定维护</span><strong>{formatCredits(type.fixedMaintenanceCostPerDay * FIXED_MAINTENANCE_COST_SCALE)} / 日</strong></div>
               </div>
               <div className="drive-specs"><div><span>亚光速</span><strong>{formatModeValue(type, "sublight")}</strong></div>{interstellarModes.map((mode) => <div key={mode}><span>{MODE_LABELS[mode]} · 耗油系数 {type.fuelPerDistanceByMode[mode]}</span><strong>{formatModeValue(type, mode)}</strong></div>)}</div>
               <div className="fuel-curve-table"><div className="fuel-curve-heading"><span>自动配油曲线 · 已含 20% 应急裕度</span><small>空载 / 满载任务耗油</small></div>{curve.map((point) => <div key={point.label}><span>{point.label}<small>{point.distance.toFixed(0)} 光年 · 错配 ×{point.empty.rangeMismatchMultiplier.toFixed(2)}</small></span><strong>{point.empty.fuelUnits.toFixed(1)} / {point.full.fuelUnits.toFixed(1)} 单位<small>满载起飞装油 {point.full.requiredFuelLoadUnits.toFixed(1)} · 油箱 {(point.full.fuelCapacityUtilization * 100).toFixed(0)}%</small></strong></div>)}</div>

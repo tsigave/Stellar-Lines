@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   advanceGameDay,
-  adjustPlayerRouteFare,
   closePlayerRoute,
   assignShipsToFleetConfiguration,
   createFleetConfiguration,
@@ -12,10 +11,12 @@ import {
   DEFAULT_GALAXY_CONFIG,
   gameScenario,
   isGameState,
+  migrateGameState,
   performShipMaintenance,
   placeShipPurchaseAgreement,
   setAutoMaintenanceThreshold,
-  setAutoSellAge,
+  setAutoReplacementAge,
+  setPlayerRouteFares,
   updateFleetConfiguration,
   simulateCampaign,
   togglePlayerRoute,
@@ -30,8 +31,10 @@ import { FleetPanel } from "./components/FleetPanel.js";
 import { GalaxyMap } from "./components/GalaxyMap.js";
 import { GenerationPanel } from "./components/GenerationPanel.js";
 import { OperationsPanel } from "./components/OperationsPanel.js";
+import { RouteEconomicsPanel } from "./components/RouteEconomicsPanel.js";
 import { TimeControls, type GameSpeed } from "./components/TimeControls.js";
 import { TopMetrics } from "./components/TopMetrics.js";
+import { loadStoredGame, persistGame } from "./storage.js";
 
 const SAVE_KEY = "stellar-lines-v0-save";
 
@@ -58,12 +61,9 @@ function createSession(
 
 function initialSession(): GameSession {
   try {
-    const serialized = window.localStorage.getItem(SAVE_KEY);
-    if (serialized) {
-      const game: unknown = JSON.parse(serialized);
-      if (isGameState(game)) {
-        return { generated: createGeneratedScenario(game.config), game, restored: true };
-      }
+    const storedGame = migrateGameState(loadStoredGame(window.localStorage, SAVE_KEY));
+    if (isGameState(storedGame)) {
+      return { generated: createGeneratedScenario(storedGame.config), game: storedGame, restored: true };
     }
   } catch {
     // A corrupt or unavailable local save should never prevent a new game.
@@ -83,8 +83,10 @@ export function App() {
       : "请先生成星域并选择一个基地星球。",
   );
   const [error, setError] = useState<string | null>(null);
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [showNewGame, setShowNewGame] = useState(!session.restored);
-  const [activeView, setActiveView] = useState<"map" | "fleet">("map");
+  const [activeView, setActiveView] = useState<"map" | "fleet" | "route">("map");
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(session.game.routes[0]?.id ?? null);
   const { generated, game } = session;
 
   const newGamePreview = useMemo(() => {
@@ -111,7 +113,15 @@ export function App() {
   }, [game, generated]);
 
   useEffect(() => {
-    if (session.restored) window.localStorage.setItem(SAVE_KEY, JSON.stringify(game));
+    if (!session.restored) return;
+    const result = persistGame(window.localStorage, SAVE_KEY, game);
+    if (!result.saved) {
+      setSaveWarning("浏览器存储空间已满：当前进度仍可继续游玩，但自动存档暂不可用。");
+    } else if (game.history.length > 0 && result.retainedHistoryDays < Math.min(90, game.history.length)) {
+      setSaveWarning(`浏览器存储空间不足：自动存档已保留最近 ${result.retainedHistoryDays} 日历史。`);
+    } else {
+      setSaveWarning(null);
+    }
   }, [game, session.restored]);
 
   const commit = useCallback((action: () => { state: GameState; message: string }) => {
@@ -177,10 +187,10 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.4</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.5</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
-        <div className="header-indicator"><i />自动存档</div>
+        <div className={saveWarning ? "header-indicator warning" : "header-indicator"}><i />{saveWarning ? "存档受限" : "自动存档"}</div>
       </header>
 
       <TopMetrics game={game} />
@@ -192,9 +202,21 @@ export function App() {
         <button className={activeView === "fleet" ? "active" : ""} onClick={() => setActiveView("fleet")}>
           <span>舰队管理</span><small>购买 · 舱位 · 维护</small>
         </button>
+        {selectedRouteId && <button className={activeView === "route" ? "active" : ""} onClick={() => setActiveView("route")}>
+          <span>航线经营</span><small>旅客 · 价格 · 成本</small>
+        </button>}
       </nav>
 
-      {activeView === "fleet" ? (
+      {activeView === "route" && selectedRouteId ? (
+        <RouteEconomicsPanel
+          game={game}
+          galaxy={generated.galaxy}
+          baseScenario={generated.scenario}
+          routeId={selectedRouteId}
+          onBack={() => setActiveView("map")}
+          onConfirmFares={(routeId, fares) => commit(() => setPlayerRouteFares(game, routeId, fares))}
+        />
+      ) : activeView === "fleet" ? (
         <FleetPanel
           game={game}
           shipTypes={generated.scenario.shipTypes}
@@ -204,7 +226,7 @@ export function App() {
           onAssignShips={(configurationId, shipIds) => commit(() => assignShipsToFleetConfiguration(game, configurationId, shipIds))}
           onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
           onAutoMaintenanceThresholdChange={(threshold) => commit(() => setAutoMaintenanceThreshold(game, threshold))}
-          onAutoSellAgeChange={(ageYears) => commit(() => setAutoSellAge(game, ageYears))}
+          onAutoReplacementAgeChange={(ageYears) => commit(() => setAutoReplacementAge(game, ageYears))}
         />
       ) : (
         <main className="workspace">
@@ -244,14 +266,14 @@ export function App() {
               shipTypes={generated.scenario.shipTypes}
               events={events}
               onToggleRoute={(routeId) => commit(() => togglePlayerRoute(game, routeId))}
-              onAdjustFare={(routeId, delta) => commit(() => adjustPlayerRouteFare(game, routeId, delta))}
+              onOpenRoute={(routeId) => { setSelectedRouteId(routeId); setActiveView("route"); setSpeed(0); }}
               onCloseRoute={(routeId) => commit(() => closePlayerRoute(game, routeId))}
             />
           </aside>
         </main>
       )}
 
-      {(notice || error) && <div className={error ? "game-toast global-toast error" : "game-toast global-toast"}>{error ?? notice}</div>}
+      {(notice || error || saveWarning) && <div className={error || saveWarning ? "game-toast global-toast error" : "game-toast global-toast"}>{error ?? saveWarning ?? notice}</div>}
 
       <TimeControls day={game.day} speed={speed} disabled={game.status !== "playing"} onSpeedChange={setSpeed} onAdvance={advanceOneDay} />
 

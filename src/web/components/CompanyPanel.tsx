@@ -16,7 +16,7 @@ interface CompanyPanelProps {
   events: readonly MarketEvent[];
   onToggleRoute: (routeId: string) => void;
   onCloseRoute: (routeId: string) => void;
-  onAdjustFare: (routeId: string, delta: number) => void;
+  onOpenRoute: (routeId: string) => void;
 }
 
 function portName(galaxy: GeneratedGalaxy, portId: string): string {
@@ -34,7 +34,7 @@ export function CompanyPanel({
   events,
   onToggleRoute,
   onCloseRoute,
-  onAdjustFare,
+  onOpenRoute,
 }: CompanyPanelProps) {
   const latest = game.history.at(-1);
   const totalPassengers = game.history.reduce((sum, day) => sum + day.passengers, 0);
@@ -59,9 +59,10 @@ export function CompanyPanel({
 
       <div className="section-title">旅客满意需求</div>
       <div className="passenger-preferences">
-        <div><strong>经济</strong><span>船况与可靠性</span></div>
-        <div><strong>商务</strong><span>速度与准点率</span></div>
-        <div><strong>高端</strong><span>舒适度与船况</span></div>
+        <div><strong>商务</strong><span>时间、班次与准点</span></div>
+        <div><strong>休闲旅游</strong><span>价格、舒适与直达</span></div>
+        <div><strong>廉价</strong><span>票价与基础可靠性</span></div>
+        <div><strong>高端</strong><span>舒适、准点与直达</span></div>
       </div>
 
       <div className="section-title">航线表现</div>
@@ -86,7 +87,7 @@ export function CompanyPanel({
               </div>
               <div className="route-card-meta">
                 <span>{shipType?.name} · {route.routingMode === "warp" ? "曲率直达" : "超空间航路"}</span>
-                <span>票价 {Math.round(route.pricing.multiplier * 100)}%</span>
+                <span>准点率 {((summary?.onTimeRate ?? 0) * 100).toFixed(0)}%</span>
               </div>
               <div className="route-stats">
                 <span>客流 <strong>{formatNumber(summary?.passengers ?? 0)}</strong></span>
@@ -96,9 +97,14 @@ export function CompanyPanel({
                 <span>满意度 <strong>{(summary?.satisfaction ?? 0).toFixed(0)}</strong></span>
                 <span>利润 <strong className={(summary?.revenue ?? 0) - (summary?.cost ?? 0) >= 0 ? "positive-text" : "negative-text"}>{formatCredits((summary?.revenue ?? 0) - (summary?.cost ?? 0))}</strong></span>
               </div>
+              <div className="route-class-loads" aria-label="三舱上座率">
+                <span>经济 {((summary?.loadFactorByClass.economy ?? 0) * 100).toFixed(0)}%</span>
+                <span>商务 {((summary?.loadFactorByClass.business ?? 0) * 100).toFixed(0)}%</span>
+                <span>头等 {((summary?.loadFactorByClass.premium ?? 0) * 100).toFixed(0)}%</span>
+              </div>
+              {(summary?.warnings.length ?? 0) > 0 && <div className="route-warning">⚠ {summary!.warnings.join(" · ")}</div>}
               <div className="route-actions">
-                <button onClick={() => onAdjustFare(route.id, -0.05)}>降价</button>
-                <button onClick={() => onAdjustFare(route.id, 0.05)}>提价</button>
+                <button className="route-detail-button" onClick={() => onOpenRoute(route.id)}>经营详情</button>
                 <button onClick={() => onToggleRoute(route.id)}>{route.active ? "暂停" : "恢复"}</button>
                 <button className="danger-button" onClick={() => onCloseRoute(route.id)}>关闭</button>
               </div>

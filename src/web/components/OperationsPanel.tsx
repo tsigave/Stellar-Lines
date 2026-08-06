@@ -3,6 +3,7 @@ import {
   buildRouteServices,
   fleetConfigurationForShip,
   gameWorldLegs,
+  recommendRouteFares,
   ROUTE_OPENING_COST,
   shipMaintenanceState,
   type CabinConfiguration,
@@ -38,7 +39,7 @@ export function OperationsPanel({
   const [destinationPortId, setDestinationPortId] = useState(defaultDestination);
   const [selectedShipIds, setSelectedShipIds] = useState<string[]>([]);
   const [routeName, setRouteName] = useState("");
-  const [fareMultiplier, setFareMultiplier] = useState(1);
+  const [fares, setFares] = useState<CabinConfiguration>({ economy: 120, business: 260, premium: 520 });
   const [routingMode, setRoutingMode] = useState<PlayerRoutingMode>("hyperspace");
   const basePort = galaxy.ports.find((port) => port.id === game.basePortId);
   const destinationPort = galaxy.ports.find((port) => port.id === destinationPortId);
@@ -114,14 +115,16 @@ export function OperationsPanel({
       assignedShips: selectedShipIds.length,
       cabinCapacityByClass: averageCabins,
       pricing: {
-        multiplier: fareMultiplier,
+        multiplier: 1,
         passengerClassMultiplier: { economy: 1, business: 1.35, premium: 2.1 },
+        fareByClass: fares,
       },
       maintenanceAllowanceHours: 0,
       active: true,
     };
     try {
       const services = buildRouteServices(route, selectedShipType, galaxy.ports, gameWorldLegs(galaxy));
+      const recommendations = recommendRouteFares(route.id, services);
       const departuresPerWeek = services[0]?.departuresPerWeek ?? 0;
       return {
         error: null,
@@ -135,6 +138,7 @@ export function OperationsPanel({
         fuelFull: services[0]?.fuelConsumptionPerDepartureFull ?? 0,
         fuelLoadEmpty: services[0]?.fuelLoadPerDepartureEmpty ?? 0,
         fuelLoadFull: services[0]?.fuelLoadPerDepartureFull ?? 0,
+        recommendations,
       };
     } catch (caught) {
       return {
@@ -147,9 +151,10 @@ export function OperationsPanel({
         fuelFull: 0,
         fuelLoadEmpty: 0,
         fuelLoadFull: 0,
+        recommendations: null,
       };
     }
-  }, [averageCabins, destinationPortId, fareMultiplier, galaxy, game.basePortId, routingMode, selectedShipIds.length, selectedShipTypes]);
+  }, [averageCabins, destinationPortId, fares, galaxy, game.basePortId, routingMode, selectedShipIds.length, selectedShipTypes]);
 
   const toggleShip = (shipId: string) => {
     setSelectedShipIds((current) => current.includes(shipId)
@@ -162,7 +167,8 @@ export function OperationsPanel({
       originPortId: game.basePortId,
       destinationPortId,
       shipIds: selectedShipIds,
-      fareMultiplier,
+      fareMultiplier: 1,
+      fareByClass: fares,
       routingMode,
     });
     setRouteName("");
@@ -228,8 +234,33 @@ export function OperationsPanel({
       <label className="field-label" htmlFor="route-name">航线名称</label>
       <input id="route-name" value={routeName} placeholder="留空自动命名" onChange={(event) => setRouteName(event.target.value)} />
 
-      <div className="slider-heading"><label htmlFor="fare-multiplier">票价策略</label><output>{Math.round(fareMultiplier * 100)}%</output></div>
-      <input id="fare-multiplier" type="range" min="0.65" max="1.8" step="0.05" value={fareMultiplier} onChange={(event) => setFareMultiplier(Number(event.target.value))} />
+      <div className="field-label pricing-heading">三舱单程票价 <span>当前 / 盈亏平衡 / 推荐</span></div>
+      <div className="cabin-fare-editor compact">
+        {(["economy", "business", "premium"] as const).map((cabinClass) => {
+          const recommendation = preview?.recommendations?.[cabinClass];
+          const label = cabinClass === "economy" ? "经济舱" : cabinClass === "business" ? "商务舱" : "头等舱";
+          return (
+            <label key={cabinClass}>
+              <span>{label}</span>
+              <input
+                aria-label={`${label}票价`}
+                type="number"
+                min="0"
+                step="10"
+                value={fares[cabinClass]}
+                onChange={(event) => setFares((current) => ({ ...current, [cabinClass]: Math.max(0, Number(event.target.value) || 0) }))}
+              />
+              <small>{recommendation
+                ? `${recommendation.breakEvenFare.toFixed(0)} / ${recommendation.recommendedFare.toFixed(0)} Cr${recommendation.confidence === "low" ? " · 低置信" : ""}`
+                : "—"}</small>
+              <button type="button" disabled={!recommendation} onClick={() => recommendation && setFares((current) => ({
+                ...current,
+                [cabinClass]: Math.round(recommendation.recommendedFare / 10) * 10,
+              }))}>恢复推荐</button>
+            </label>
+          );
+        })}
+      </div>
 
       {preview && !preview.error && (
         <div className="route-preview">

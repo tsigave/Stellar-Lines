@@ -47,13 +47,13 @@ export function simulateCampaign(
     const markets = generateMarketDemands(scenario.ports, referenceTimes, {
       day,
       seed: scenario.seed,
-      demandMultiplier: (origin, destination, passengerClass) =>
+      demandMultiplier: (origin, destination, passengerType) =>
         marketEventDemandMultiplier(
           scenario.events,
           day,
           origin.id,
           destination.id,
-          passengerClass,
+          passengerType,
         ),
     });
     days.push({

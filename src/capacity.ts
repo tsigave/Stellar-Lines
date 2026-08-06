@@ -17,7 +17,7 @@ export interface CapacityAllocation {
 }
 
 function marketKey(market: MarketDemand): string {
-  return `${market.originPortId}->${market.destinationPortId}:${market.passengerClass}`;
+  return `${market.originPortId}->${market.destinationPortId}:${market.passengerType}`;
 }
 
 function allocationKey(market: MarketDemand, option: JourneyOption): string {
@@ -44,7 +44,7 @@ function applyCapacityPass(
       for (const serviceLegId of option.serviceLegIds) {
         const legId = serviceCapacityKey(
           serviceLegId,
-          request.market.passengerClass,
+          option.cabinClass,
           availableCapacity,
         );
         totalRequestedByLeg.set(legId, (totalRequestedByLeg.get(legId) ?? 0) + requested);
@@ -60,7 +60,7 @@ function applyCapacityPass(
       for (const serviceLegId of option.serviceLegIds) {
         const legId = serviceCapacityKey(
           serviceLegId,
-          request.market.passengerClass,
+          option.cabinClass,
           availableCapacity,
         );
         const totalRequested = totalRequestedByLeg.get(legId) ?? 0;
@@ -88,7 +88,7 @@ function usedCapacity(
       for (const serviceLegId of option.serviceLegIds) {
         const legId = serviceCapacityKey(
           serviceLegId,
-          request.market.passengerClass,
+          option.cabinClass,
           availableCapacity,
         );
         used.set(legId, (used.get(legId) ?? 0) + passengers);
@@ -143,7 +143,7 @@ export function allocateCapacity(
       option.serviceLegIds.every((serviceLegId) => {
         const legId = serviceCapacityKey(
           serviceLegId,
-          request.market.passengerClass,
+          option.cabinClass,
           residualCapacity,
         );
         return (residualCapacity.get(legId) ?? 0) > 1e-9;

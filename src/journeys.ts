@@ -4,8 +4,10 @@ import type {
   ChoiceParameters,
   JourneyOption,
   MarketDemand,
+  PassengerClass,
   ServiceLeg,
 } from "./types.js";
+import { PASSENGER_CLASSES } from "./types.js";
 
 export interface JourneySearchOptions {
   maximumServiceLegs?: number;
@@ -13,6 +15,12 @@ export interface JourneySearchOptions {
   maximumTimeRatio?: number;
   minimumTransferHours?: number;
   choiceParameters?: ChoiceParameters;
+  /** v0.5 默认仅允许单一航线直达；v0.7 再开放跨航线换乘。 */
+  allowTransfers?: boolean;
+}
+
+function isDirectPath(path: readonly ServiceLeg[]): boolean {
+  return path.length <= 1 || path.every((service) => service.routeId === path[0]!.routeId);
 }
 
 function buildOutgoingServices(
@@ -66,6 +74,7 @@ function halfHeadway(service: ServiceLeg): number {
 function pathToJourney(
   path: readonly ServiceLeg[],
   market: MarketDemand,
+  cabinClass: PassengerClass,
   minimumTransferHours: number,
 ): JourneyOption {
   let inVehicleHours = 0;
@@ -85,7 +94,8 @@ function pathToJourney(
     weightedComfort += service.comfort * serviceWeight;
     weightedReputation += service.reputation * serviceWeight;
     weightedOnTime += service.onTimeRate * serviceWeight;
-    weightedSatisfaction += service.satisfactionByClass[market.passengerClass] * serviceWeight;
+    weightedSatisfaction += (service.satisfactionByPassengerType?.[market.passengerType]
+      ?? service.satisfactionByClass[cabinClass]) * serviceWeight;
 
     const next = path[index + 1];
     if (!next) return;
@@ -98,14 +108,15 @@ function pathToJourney(
     }
   });
 
-  const fareByServiceLeg = path.map((service) => service.fareByClass[market.passengerClass]);
+  const fareByServiceLeg = path.map((service) => service.fareByClass[cabinClass]);
   return {
-    id: `${market.originPortId}->${market.destinationPortId}:${market.passengerClass}:${path
+    id: `${market.originPortId}->${market.destinationPortId}:${market.passengerType}:${cabinClass}:${path
       .map((service) => service.id)
       .join("+")}`,
     originPortId: market.originPortId,
     destinationPortId: market.destinationPortId,
-    passengerClass: market.passengerClass,
+    passengerType: market.passengerType,
+    cabinClass,
     serviceLegIds: path.map((service) => service.id),
     companies: [...new Set(path.map((service) => service.companyId))],
     fare: fareByServiceLeg.reduce((sum, fare) => sum + fare, 0),
@@ -131,6 +142,7 @@ export function buildJourneyOptions(
   const maximumTimeRatio = options.maximumTimeRatio ?? 12;
   const minimumTransferHours = options.minimumTransferHours ?? 2;
   const choiceParameters = options.choiceParameters ?? DEFAULT_CHOICE_PARAMETERS;
+  const allowTransfers = options.allowTransfers ?? false;
   const outgoing = buildOutgoingServices(services);
   return enumerateServicePaths(
     outgoing,
@@ -138,7 +150,14 @@ export function buildJourneyOptions(
     market.destinationPortId,
     maximumServiceLegs,
   )
-    .map((path) => pathToJourney(path, market, minimumTransferHours))
+    .filter((path) => allowTransfers || isDirectPath(path))
+    .flatMap((path) => PASSENGER_CLASSES
+      .filter((cabinClass) => path.every((service) =>
+        service.dailySeatCapacityByClass
+          ? service.dailySeatCapacityByClass[cabinClass] > 0
+          : service.dailySeatCapacity > 0,
+      ))
+      .map((cabinClass) => pathToJourney(path, market, cabinClass, minimumTransferHours)))
     .filter(
       (journey) =>
         journey.inVehicleHours + journey.expectedWaitHours + journey.transferHours <=
@@ -153,7 +172,7 @@ export function buildJourneyOptions(
 }
 
 function marketKey(market: MarketDemand): string {
-  return `${market.originPortId}->${market.destinationPortId}:${market.passengerClass}`;
+  return `${market.originPortId}->${market.destinationPortId}:${market.passengerType}`;
 }
 
 export function buildJourneyOptionsForMarkets(
@@ -166,6 +185,7 @@ export function buildJourneyOptionsForMarkets(
   const maximumTimeRatio = options.maximumTimeRatio ?? 12;
   const minimumTransferHours = options.minimumTransferHours ?? 2;
   const choiceParameters = options.choiceParameters ?? DEFAULT_CHOICE_PARAMETERS;
+  const allowTransfers = options.allowTransfers ?? false;
   const outgoing = buildOutgoingServices(services);
   const pathsByPair = new Map<string, ServiceLeg[][]>();
   const result = new Map<string, JourneyOption[]>();
@@ -183,7 +203,14 @@ export function buildJourneyOptionsForMarkets(
       pathsByPair.set(pairKey, paths);
     }
     const journeys = paths
-      .map((path) => pathToJourney(path, market, minimumTransferHours))
+      .filter((path) => allowTransfers || isDirectPath(path))
+      .flatMap((path) => PASSENGER_CLASSES
+        .filter((cabinClass) => path.every((service) =>
+          service.dailySeatCapacityByClass
+            ? service.dailySeatCapacityByClass[cabinClass] > 0
+            : service.dailySeatCapacity > 0,
+        ))
+        .map((cabinClass) => pathToJourney(path, market, cabinClass, minimumTransferHours)))
       .filter(
         (journey) =>
           journey.inVehicleHours + journey.expectedWaitHours + journey.transferHours <=

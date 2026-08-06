@@ -509,7 +509,7 @@ export const PROOF_OF_CONCEPT_EVENTS: readonly MarketEvent[] = [
     description: "A major industry exhibition draws business and premium travelers to Alpha Prime.",
     announcedOnDay: 10, startsOnDay: 30, endsOnDay: 48, recoveryDays: 7,
     affectedPortIds: ["alpha-prime"],
-    demandModifiers: { economy: 1.25, business: 2.8, premium: 1.9 },
+    demandModifiers: { budget: 1.25, leisure: 1.6, business: 2.8, luxury: 1.9 },
     portCapacityModifier: 0.9,
   },
   {
@@ -526,7 +526,7 @@ export const PROOF_OF_CONCEPT_EVENTS: readonly MarketEvent[] = [
     description: "Unstable currents slow all services entering the Vega system.",
     announcedOnDay: 76, startsOnDay: 90, endsOnDay: 101, recoveryDays: 5,
     affectedPortIds: ["aurora", "karst", "vega-hub"],
-    demandModifiers: { economy: 0.9, business: 0.82, premium: 0.86 },
+    demandModifiers: { budget: 0.9, leisure: 0.88, business: 0.82, luxury: 0.86 },
     travelTimeModifier: 1.55,
   },
   {
@@ -535,7 +535,7 @@ export const PROOF_OF_CONCEPT_EVENTS: readonly MarketEvent[] = [
     description: "The celebrated festival creates a seasonal tourism boom.",
     announcedOnDay: 98, startsOnDay: 120, endsOnDay: 140, recoveryDays: 8,
     affectedPortIds: ["aurora"],
-    demandModifiers: { economy: 1.7, business: 1.15, premium: 2.4 },
+    demandModifiers: { budget: 1.7, leisure: 2.2, business: 1.15, luxury: 2.4 },
   },
   {
     id: "frontier-settlement-wave",
@@ -543,7 +543,7 @@ export const PROOF_OF_CONCEPT_EVENTS: readonly MarketEvent[] = [
     description: "A new habitat program attracts settlers and supporting professionals.",
     announcedOnDay: 142, startsOnDay: 160, endsOnDay: 190, recoveryDays: 20,
     affectedPortIds: ["frontier"],
-    demandModifiers: { economy: 2.1, business: 1.6, premium: 1.25 },
+    demandModifiers: { budget: 2.1, leisure: 1.8, business: 1.6, luxury: 1.25 },
   },
 ];
 

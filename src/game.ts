@@ -1,14 +1,20 @@
 import { simulateCampaign } from "./campaign.js";
+import { explainJourneyChoice } from "./choice.js";
+import { PASSENGER_CLASSES, PASSENGER_TYPES } from "./types.js";
 import { applyEventsToPorts } from "./events.js";
 import { buildRouteServices } from "./routes.js";
 import { createRandom } from "./generation/random.js";
+import { FIXED_MAINTENANCE_COST_SCALE } from "./parameters.js";
 import type {
   CabinConfiguration,
   CampaignDay,
   GeneratedGalaxy,
   GalaxyGenerationConfig,
   MarketEvent,
+  PassengerEvaluation,
+  PassengerType,
   Route,
+  RouteCostBreakdown,
   ShipType,
   SimulationScenario,
   Starport,
@@ -16,7 +22,7 @@ import type {
   WorldLeg,
 } from "./types.js";
 
-export const GAME_STATE_VERSION = 7;
+export const GAME_STATE_VERSION = 9;
 export const STARTING_CASH = 3_000_000;
 export const ROUTE_OPENING_COST = 25_000;
 export const DAILY_COMPANY_OVERHEAD = 700;
@@ -72,6 +78,8 @@ export interface ShipPurchaseOrder {
   agreementDiscountRate: number;
   orderedDay: number;
   deliveryDay: number;
+  /** Automatic renewal orders pair each delivered ship with one existing ship. */
+  replacementShipIds?: readonly string[];
 }
 
 export interface ShipPurchaseLineInput {
@@ -240,6 +248,31 @@ export interface GameRouteDaySummary {
   departuresPerWeek: number;
   roundTripDays: number;
   satisfaction: number;
+  profit: number;
+  margin: number;
+  onTimeRate: number;
+  capacityByClass: CabinConfiguration;
+  passengersByClass: CabinConfiguration;
+  loadFactorByClass: CabinConfiguration;
+  revenueByClass: CabinConfiguration;
+  passengersByType: Record<PassengerType, number>;
+  requestedByType: Record<PassengerType, number>;
+  noTravelByType: Record<PassengerType, number>;
+  capacityLostByType: Record<PassengerType, number>;
+  priceLostPassengers: number;
+  capacityLostPassengers: number;
+  costBreakdown: RouteCostBreakdown;
+  directions: Readonly<Record<"outbound" | "return", {
+    capacityByClass: CabinConfiguration;
+    passengersByClass: CabinConfiguration;
+    loadFactorByClass: CabinConfiguration;
+  }>>;
+  evaluations: readonly PassengerEvaluation[];
+  warnings: readonly string[];
+  forecastPassengers: number;
+  forecastProfit: number;
+  forecastPassengerError: number;
+  forecastProfitError: number;
 }
 
 export interface GameDayRecord {
@@ -278,7 +311,7 @@ export interface GameState {
   status: GameStatus;
   primaryGoalCompletedOnDay: number | null;
   autoMaintenanceThreshold: number;
-  autoSellAgeYears: number | null;
+  autoReplacementAgeYears: number | null;
 }
 
 export interface CreateRouteInput {
@@ -287,6 +320,7 @@ export interface CreateRouteInput {
   destinationPortId: string;
   shipIds: readonly string[];
   fareMultiplier: number;
+  fareByClass?: CabinConfiguration;
   routingMode: PlayerRoutingMode;
 }
 
@@ -325,7 +359,7 @@ export function createGeneratedGameEvents(galaxy: GeneratedGalaxy): MarketEvent[
       endsOnDay: 27,
       recoveryDays: 5,
       affectedPortIds: [first.id],
-      demandModifiers: { economy: 1.18, business: 2.1, premium: 1.65 },
+      demandModifiers: { budget: 1.18, leisure: 1.55, business: 2.1, luxury: 1.65 },
       portCapacityModifier: 0.9,
     },
     {
@@ -337,7 +371,7 @@ export function createGeneratedGameEvents(galaxy: GeneratedGalaxy): MarketEvent[
       endsOnDay: 55,
       recoveryDays: 8,
       affectedPortIds: [second.id],
-      demandModifiers: { business: 0.92, premium: 0.94 },
+      demandModifiers: { business: 0.92, luxury: 0.94 },
       fuelPriceModifier: 1.75,
     },
     {
@@ -349,7 +383,7 @@ export function createGeneratedGameEvents(galaxy: GeneratedGalaxy): MarketEvent[
       endsOnDay: 98,
       recoveryDays: 12,
       affectedPortIds: [third.id],
-      demandModifiers: { economy: 1.9, business: 1.35, premium: 1.12 },
+      demandModifiers: { budget: 1.9, leisure: 2.15, business: 1.35, luxury: 1.12 },
     },
   ];
 }
@@ -459,10 +493,28 @@ function operationalPlayerRoutes(state: GameState, shipTypes: readonly ShipType[
       business: configurations.reduce((sum, configuration) => sum + configuration.cabins.business, 0) / availableShips.length,
       premium: configurations.reduce((sum, configuration) => sum + configuration.cabins.premium, 0) / availableShips.length,
     };
+    const maintenance = fleetFixedMaintenanceCost(availableShips, shipTypes, state.day);
+    const expectedHoldingDays = Math.max(360, (state.autoReplacementAgeYears ?? 8) * DAYS_PER_SHIP_YEAR);
+    const depreciationPerDay = shipType
+      ? availableShips.reduce((sum, ship) => {
+          const residualDay = ship.commissionedDay + expectedHoldingDays;
+          const residual = shipResaleValue(ship, shipType, residualDay);
+          return sum + Math.max(0, ship.purchasePricePaid - residual) /
+            Math.max(1, residualDay - ship.commissionedDay);
+        }, 0)
+      : 0;
     return [{
       ...route,
       assignedShips: availableShips.length,
       cabinCapacityByClass,
+      economics: {
+        fixedMaintenancePerDay: Math.max(0, maintenance.total - maintenance.ageSurcharge),
+        ageSurchargePerDay: maintenance.ageSurcharge,
+        depreciationPerDay,
+        expectedDelayCostPerDay: shipType
+          ? (1 - shipType.reliability) * shipType.crewCostPerFlightHour * 8 * availableShips.length
+          : 0,
+      },
       ...(shipType ? {
         effectiveComfort: availableShips.reduce(
           (sum, ship) => sum + shipComfortAtAge(ship, shipType, state.day),
@@ -515,8 +567,25 @@ export function createNewGame(
     status: "playing",
     primaryGoalCompletedOnDay: null,
     autoMaintenanceThreshold: DEFAULT_AUTO_MAINTENANCE_THRESHOLD,
-    autoSellAgeYears: null,
+    autoReplacementAgeYears: null,
   };
+}
+
+export function migrateGameState(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const candidate = value as Record<string, unknown>;
+  if (
+    candidate.version === 8 &&
+    (candidate.autoSellAgeYears === null || typeof candidate.autoSellAgeYears === "number")
+  ) {
+    const { autoSellAgeYears, ...rest } = candidate;
+    return {
+      ...rest,
+      version: GAME_STATE_VERSION,
+      autoReplacementAgeYears: autoSellAgeYears,
+    };
+  }
+  return value;
 }
 
 export function isGameState(value: unknown): value is GameState {
@@ -541,7 +610,7 @@ export function isGameState(value: unknown): value is GameState {
     Array.isArray(candidate.history) &&
     Array.isArray(candidate.fuelMarket) &&
     typeof candidate.autoMaintenanceThreshold === "number" &&
-    (candidate.autoSellAgeYears === null || typeof candidate.autoSellAgeYears === "number")
+    (candidate.autoReplacementAgeYears === null || typeof candidate.autoReplacementAgeYears === "number")
   );
 }
 
@@ -816,7 +885,16 @@ export function createPlayerRoute(
     shipTypeId: shipType.id,
     assignedShips: selectedShips.length,
     cabinCapacityByClass,
-    pricing: routePricing(Math.max(0.65, Math.min(1.8, input.fareMultiplier))),
+    pricing: {
+      ...routePricing(Math.max(0, input.fareMultiplier)),
+      ...(input.fareByClass ? {
+        fareByClass: {
+          economy: Math.max(0, input.fareByClass.economy),
+          business: Math.max(0, input.fareByClass.business),
+          premium: Math.max(0, input.fareByClass.premium),
+        },
+      } : {}),
+    },
     maintenanceAllowanceHours: 0,
     active: true,
   };
@@ -886,17 +964,17 @@ export function setAutoMaintenanceThreshold(
   };
 }
 
-export function setAutoSellAge(
+export function setAutoReplacementAge(
   state: GameState,
   ageYears: number | null,
 ): GameActionResult {
   requirePlaying(state);
   const normalized = ageYears === null ? null : clamp(Math.round(ageYears), 1, 30);
   return {
-    state: { ...state, autoSellAgeYears: normalized },
+    state: { ...state, autoReplacementAgeYears: normalized },
     message: normalized === null
-      ? "已关闭按船龄自动出售"
-      : `舰船达到 ${normalized} 年船龄后将自动出售`,
+      ? "已关闭按船龄自动更新"
+      : `舰船达到 ${normalized} 年船龄后将自动订购同型号新船，并在交付后更换`,
   };
 }
 
@@ -909,34 +987,48 @@ export function deliverShipPurchaseOrders(
   if (dueOrders.length === 0) return { state, message: "今日没有待交付舰船" };
   let nextShipNumber = state.nextShipNumber;
   const deliveredShips: OwnedShip[] = [];
+  const replacedShips: OwnedShip[] = [];
   for (const order of dueOrders) {
     const shipType = shipTypes.find((candidate) => candidate.id === order.shipTypeId);
     if (!shipType) continue;
     for (let index = 0; index < order.quantity; index += 1) {
       const shipNumber = nextShipNumber++;
+      const replacementShipId = order.replacementShipIds?.[index];
+      const replacedShip = replacementShipId
+        ? state.fleet.find((ship) => ship.id === replacementShipId)
+        : undefined;
+      if (replacedShip) replacedShips.push(replacedShip);
       deliveredShips.push({
         id: `ship-${shipNumber}`,
         name: `${shipType.name} ${shipNumber.toString().padStart(2, "0")}`,
         shipTypeId: shipType.id,
-        routeId: null,
+        routeId: replacedShip?.routeId ?? null,
         condition: 100,
         flightHoursSinceMaintenance: 0,
         maintenanceUntilDay: null,
-        configurationId: null,
+        configurationId: replacedShip?.configurationId ?? null,
         commissionedDay: throughDay,
         purchasePricePaid: order.unitPrice,
       });
     }
   }
   const dueIds = new Set(dueOrders.map((order) => order.id));
+  const replacedIds = new Set(replacedShips.map((ship) => ship.id));
+  const replacementRevenue = replacedShips.reduce((sum, ship) => {
+    const shipType = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
+    return sum + (shipType ? shipResaleValue(ship, shipType, throughDay) : 0);
+  }, 0);
   return {
     state: {
       ...state,
-      fleet: [...state.fleet, ...deliveredShips],
+      cash: state.cash + replacementRevenue,
+      fleet: [...state.fleet.filter((ship) => !replacedIds.has(ship.id)), ...deliveredShips],
       shipPurchaseOrders: state.shipPurchaseOrders.filter((order) => !dueIds.has(order.id)),
       nextShipNumber,
     },
-    message: `船厂已交付 ${deliveredShips.length} 艘舰船；新船为空舱，请先分配统一配置方案`,
+    message: replacedShips.length > 0
+      ? `船厂已交付 ${deliveredShips.length} 艘舰船，其中 ${replacedShips.length} 艘已自动接替旧船；旧船回收 ${replacementRevenue.toFixed(0)} Cr`
+      : `船厂已交付 ${deliveredShips.length} 艘舰船；新船为空舱，请先分配统一配置方案`,
   };
 }
 
@@ -971,39 +1063,61 @@ function refreshShipyardMarket(
   });
 }
 
-function applyAutoSellByAge(
+function orderAutomaticReplacements(
   state: GameState,
-  fleet: readonly OwnedShip[],
-  routes: readonly Route[],
   day: number,
-  cash: number,
   shipTypes: readonly ShipType[],
-): { fleet: OwnedShip[]; routes: Route[]; cash: number; soldShipNames: string[]; revenue: number } {
-  if (state.autoSellAgeYears === null) {
-    return { fleet: [...fleet], routes: [...routes], cash, soldShipNames: [], revenue: 0 };
+): { state: GameState; orderedShipNames: string[]; deferredCount: number } {
+  if (state.autoReplacementAgeYears === null) {
+    return { state, orderedShipNames: [], deferredCount: 0 };
   }
-  const sold = fleet.filter((ship) =>
-    ship.maintenanceUntilDay === null && shipAgeYears(ship, day) >= state.autoSellAgeYears!,
+  const pendingReplacementIds = new Set(
+    state.shipPurchaseOrders.flatMap((order) => order.replacementShipIds ?? []),
   );
-  if (sold.length === 0) {
-    return { fleet: [...fleet], routes: [...routes], cash, soldShipNames: [], revenue: 0 };
+  const eligible = state.fleet
+    .filter((ship) =>
+      shipAgeYears(ship, day) >= state.autoReplacementAgeYears! && !pendingReplacementIds.has(ship.id),
+    )
+    .sort((left, right) => shipAgeYears(right, day) - shipAgeYears(left, day))
+    .slice(0, 60);
+  if (eligible.length === 0) {
+    return { state, orderedShipNames: [], deferredCount: 0 };
   }
-  const soldIds = new Set(sold.map((ship) => ship.id));
-  const remainingFleet = fleet.filter((ship) => !soldIds.has(ship.id));
-  const revenue = sold.reduce((sum, ship) => {
-    const shipType = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
-    return sum + (shipType ? shipResaleValue(ship, shipType, day) : 0);
-  }, 0);
-  const nextRoutes = routes.map((route) => {
-    const assignedShips = remainingFleet.filter((ship) => ship.routeId === route.id).length;
-    return { ...route, assignedShips, active: assignedShips > 0 ? route.active : false };
-  });
+
+  const selected: OwnedShip[] = [];
+  for (const ship of eligible) {
+    if (selected.filter((item) => item.shipTypeId === ship.shipTypeId).length >= 20) continue;
+    const candidate = [...selected, ship];
+    const lines = [...new Set(candidate.map((item) => item.shipTypeId))].map((shipTypeId) => ({
+      shipTypeId,
+      quantity: candidate.filter((item) => item.shipTypeId === shipTypeId).length,
+    }));
+    const quote = quoteShipPurchaseAgreement(state, lines, shipTypes);
+    if (quote.totalPrice <= state.cash) selected.push(ship);
+  }
+  if (selected.length === 0) {
+    return { state, orderedShipNames: [], deferredCount: eligible.length };
+  }
+
+  const lines = [...new Set(selected.map((ship) => ship.shipTypeId))].map((shipTypeId) => ({
+    shipTypeId,
+    quantity: selected.filter((ship) => ship.shipTypeId === shipTypeId).length,
+  }));
+  const existingOrderIds = new Set(state.shipPurchaseOrders.map((order) => order.id));
+  const purchased = placeShipPurchaseAgreement(state, lines, shipTypes).state;
+  const replacementIdsByType = new Map(lines.map((line) => [
+    line.shipTypeId,
+    selected.filter((ship) => ship.shipTypeId === line.shipTypeId).map((ship) => ship.id),
+  ]));
+  const shipPurchaseOrders = purchased.shipPurchaseOrders.map((order) =>
+    existingOrderIds.has(order.id)
+      ? order
+      : { ...order, replacementShipIds: replacementIdsByType.get(order.shipTypeId) ?? [] },
+  );
   return {
-    fleet: remainingFleet,
-    routes: nextRoutes,
-    cash: cash + revenue,
-    soldShipNames: sold.map((ship) => ship.name),
-    revenue,
+    state: { ...purchased, shipPurchaseOrders },
+    orderedShipNames: selected.map((ship) => ship.name),
+    deferredCount: eligible.length - selected.length,
   };
 }
 
@@ -1042,6 +1156,30 @@ export function adjustPlayerRouteFare(
       ),
     },
     message: `“${route.name}”票价已调整为标准价的 ${Math.round(multiplier * 100)}%`,
+  };
+}
+
+export function setPlayerRouteFares(
+  state: GameState,
+  routeId: string,
+  fareByClass: CabinConfiguration,
+): GameActionResult {
+  requirePlaying(state);
+  const route = state.routes.find((candidate) => candidate.id === routeId);
+  if (!route) throw new Error("航线不存在");
+  const normalized: CabinConfiguration = {
+    economy: Math.max(0, Math.round(fareByClass.economy)),
+    business: Math.max(0, Math.round(fareByClass.business)),
+    premium: Math.max(0, Math.round(fareByClass.premium)),
+  };
+  return {
+    state: {
+      ...state,
+      routes: state.routes.map((candidate) => candidate.id === routeId
+        ? { ...candidate, pricing: { ...candidate.pricing, fareByClass: normalized } }
+        : candidate),
+    },
+    message: `“${route.name}”三舱票价已确认并将在下一次结算生效`,
   };
 }
 
@@ -1097,15 +1235,135 @@ function routeSummaries(
       ? services.reduce((sum, service) => sum + service.satisfaction * service.passengers, 0) / passengers
       : 0;
     const schedule = routeSchedule(route, scenario);
+    const capacityByClass: CabinConfiguration = { economy: 0, business: 0, premium: 0 };
+    const passengersByClass: CabinConfiguration = { economy: 0, business: 0, premium: 0 };
+    const revenueByClass: CabinConfiguration = { economy: 0, business: 0, premium: 0 };
+    const passengersByType: Record<PassengerType, number> = { business: 0, leisure: 0, budget: 0, luxury: 0 };
+    const requestedByType: Record<PassengerType, number> = { business: 0, leisure: 0, budget: 0, luxury: 0 };
+    const noTravelByType: Record<PassengerType, number> = { business: 0, leisure: 0, budget: 0, luxury: 0 };
+    const capacityLostByType: Record<PassengerType, number> = { business: 0, leisure: 0, budget: 0, luxury: 0 };
+    const costBreakdown: RouteCostBreakdown = {
+      fuel: 0, staff: 0, port: 0, flightMaintenance: 0, fixedMaintenance: 0,
+      ageSurcharge: 0, depreciation: 0, delay: 0, other: 0, total: 0,
+    };
+    const emptyDirection = () => ({
+      capacityByClass: { economy: 0, business: 0, premium: 0 } as CabinConfiguration,
+      passengersByClass: { economy: 0, business: 0, premium: 0 } as CabinConfiguration,
+      loadFactorByClass: { economy: 0, business: 0, premium: 0 } as CabinConfiguration,
+    });
+    const directions = { outbound: emptyDirection(), return: emptyDirection() };
+    const serviceModels = (() => {
+      const shipType = scenario.shipTypes.find((ship) => ship.id === route.shipTypeId);
+      if (!shipType) return [];
+      try {
+        return buildRouteServices({ ...route, active: true }, shipType, scenario.ports, scenario.worldLegs);
+      } catch {
+        return [];
+      }
+    })();
+    const serviceModelById = new Map(serviceModels.map((service) => [service.id, service]));
+    for (const service of services) {
+      for (const cabinClass of PASSENGER_CLASSES) {
+        capacityByClass[cabinClass] += service.capacityByClass[cabinClass];
+        passengersByClass[cabinClass] += service.passengersByClass[cabinClass];
+        revenueByClass[cabinClass] += service.revenueByClass[cabinClass];
+      }
+      for (const passengerType of PASSENGER_TYPES) passengersByType[passengerType] += service.passengersByType[passengerType];
+      for (const key of Object.keys(costBreakdown) as (keyof RouteCostBreakdown)[]) {
+        if (key !== "total") costBreakdown[key] += service.costBreakdown[key];
+      }
+      const model = serviceModelById.get(service.serviceLegId);
+      const direction = model?.fromPortId === route.stops[0]?.portId ? directions.outbound : directions.return;
+      for (const cabinClass of PASSENGER_CLASSES) {
+        direction.capacityByClass[cabinClass] += service.capacityByClass[cabinClass];
+        direction.passengersByClass[cabinClass] += service.passengersByClass[cabinClass];
+      }
+    }
+    for (const direction of [directions.outbound, directions.return]) {
+      for (const cabinClass of PASSENGER_CLASSES) {
+        direction.loadFactorByClass[cabinClass] = direction.capacityByClass[cabinClass] > 0
+          ? direction.passengersByClass[cabinClass] / direction.capacityByClass[cabinClass]
+          : 0;
+      }
+    }
+    costBreakdown.total = costBreakdown.fuel + costBreakdown.staff + costBreakdown.port +
+      costBreakdown.flightMaintenance + costBreakdown.fixedMaintenance + costBreakdown.ageSurcharge +
+      costBreakdown.depreciation + costBreakdown.delay + costBreakdown.other;
+    const revenue = services.reduce((sum, service) => sum + service.ticketRevenue, 0);
+    const cost = costBreakdown.total;
+    const profit = revenue - cost;
+    const onTimeRate = serviceModels.length > 0
+      ? serviceModels.reduce((sum, service) => sum + service.onTimeRate, 0) / serviceModels.length
+      : 0;
+    const loadFactorByClass = Object.fromEntries(PASSENGER_CLASSES.map((cabinClass) => [
+      cabinClass,
+      capacityByClass[cabinClass] > 0 ? passengersByClass[cabinClass] / capacityByClass[cabinClass] : 0,
+    ])) as CabinConfiguration;
+    const routeMarkets = campaignDay.settlement.markets.filter((market) => market.journeys.some((journey) =>
+      journey.option.serviceLegIds.some((id) => id.startsWith(`${route.id}:`)),
+    ));
+    for (const market of routeMarkets) {
+      const passengerType = market.market.passengerType;
+      requestedByType[passengerType] += market.journeys
+        .filter((journey) => journey.option.serviceLegIds.some((id) => id.startsWith(`${route.id}:`)))
+        .reduce((sum, journey) => sum + journey.requestedPassengers, 0);
+      noTravelByType[passengerType] += market.initialNoTravelPassengers;
+      capacityLostByType[passengerType] += market.capacityLostPassengers;
+    }
+    const evaluations = PASSENGER_TYPES.map((passengerType) => {
+      const entries = routeMarkets.filter((market) => market.market.passengerType === passengerType);
+      const routeJourneys = entries.flatMap((market) => market.journeys
+        .filter((journey) => journey.actualPassengers > 0 && journey.option.serviceLegIds.some((id) => id.startsWith(`${route.id}:`)))
+        .map((journey) => ({ journey, explanation: explainJourneyChoice(market.market, journey.option) })));
+      const evaluationPassengers = routeJourneys.reduce((sum, entry) => sum + entry.journey.actualPassengers, 0);
+      const reasons = routeJourneys.flatMap((entry) => [...entry.explanation.positive, ...entry.explanation.negative]);
+      const uniqueReasons = [...reasons]
+        .sort((a, b) => b.impact - a.impact)
+        .filter((reason, index, ranked) => ranked.findIndex((candidate) => candidate.code === reason.code) === index);
+      return {
+        passengerType,
+        passengers: evaluationPassengers,
+        satisfaction: evaluationPassengers > 0
+          ? routeJourneys.reduce((sum, entry) => sum + entry.explanation.satisfaction * entry.journey.actualPassengers, 0) / evaluationPassengers
+          : 0,
+        positiveReasons: uniqueReasons.filter((reason) => reason.positive).slice(0, 3),
+        negativeReasons: uniqueReasons.filter((reason) => !reason.positive).slice(0, 3),
+      };
+    });
+    const warnings: string[] = [];
+    if (profit < 0) warnings.push("航线亏损");
+    if (PASSENGER_CLASSES.some((cabinClass) => capacityByClass[cabinClass] > 0 && loadFactorByClass[cabinClass] < 0.35)) warnings.push("部分舱位上座率偏低");
+    if (onTimeRate < 0.85) warnings.push("准点率预警");
     return {
       routeId: route.id,
       passengers,
-      revenue: services.reduce((sum, service) => sum + service.ticketRevenue, 0),
-      cost: services.reduce((sum, service) => sum + service.operatingCost, 0),
+      revenue,
+      cost,
       loadFactor: capacity > 0 ? passengers / capacity : 0,
       departuresPerWeek: schedule.departuresPerWeek,
       roundTripDays: schedule.roundTripDays,
       satisfaction,
+      profit,
+      margin: revenue > 0 ? profit / revenue : 0,
+      onTimeRate,
+      capacityByClass,
+      passengersByClass,
+      loadFactorByClass,
+      revenueByClass,
+      passengersByType,
+      requestedByType,
+      noTravelByType,
+      capacityLostByType,
+      priceLostPassengers: routeMarkets.reduce((sum, market) => sum + market.priceLostPassengers, 0),
+      capacityLostPassengers: routeMarkets.reduce((sum, market) => sum + market.capacityLostPassengers, 0),
+      costBreakdown,
+      directions,
+      evaluations,
+      warnings,
+      forecastPassengers: passengers,
+      forecastProfit: profit,
+      forecastPassengerError: 0,
+      forecastProfitError: 0,
     };
   });
 }
@@ -1208,7 +1466,7 @@ export function fleetFixedMaintenanceCost(
   for (const ship of fleet) {
     const type = typeById.get(ship.shipTypeId);
     if (!type) continue;
-    const originalBase = type.fixedMaintenanceCostPerDay;
+    const originalBase = type.fixedMaintenanceCostPerDay * FIXED_MAINTENANCE_COST_SCALE;
     const base = originalBase * (1 + shipAgeYears(ship, currentDay) * SHIP_AGE_MAINTENANCE_RATE);
     const supplierDiscount = Math.min(0.18, Math.max(0, (supplierCounts.get(type.manufacturer) ?? 1) - 1) * 0.015);
     const familyDiscount = Math.min(0.22, Math.max(0, (familyCounts.get(type.familyId) ?? 1) - 1) * 0.025);
@@ -1245,8 +1503,10 @@ export function advanceGameDay(
   );
   const revenue = company?.ticketRevenue ?? 0;
   const operatingCost = company?.operatingCost ?? 0;
-  const fixedMaintenance = fleetFixedMaintenanceCost(state.fleet, baseScenario.shipTypes, state.day);
-  const overhead = DAILY_COMPANY_OVERHEAD + fixedMaintenance.total;
+  const operationalRouteIds = new Set(scenario.routes.filter((route) => route.companyId === "player").map((route) => route.id));
+  const idleFleet = state.fleet.filter((ship) => !ship.routeId || !operationalRouteIds.has(ship.routeId));
+  const idleFixedMaintenance = fleetFixedMaintenanceCost(idleFleet, baseScenario.shipTypes, state.day);
+  const overhead = DAILY_COMPANY_OVERHEAD + idleFixedMaintenance.total;
   const profit = revenue - operatingCost - overhead;
   const cash = state.cash + profit;
   const passengers = company?.passengers ?? 0;
@@ -1269,16 +1529,18 @@ export function advanceGameDay(
     cash: automaticMaintenance.cash,
     fleet: automaticMaintenance.fleet,
   }, baseScenario.shipTypes, nextDay);
-  const deliveredCount = delivery.state.fleet.length - automaticMaintenance.fleet.length;
-  const automaticSale = applyAutoSellByAge(
-    state,
-    delivery.state.fleet,
-    state.routes,
+  const deliveredOrders = state.shipPurchaseOrders.filter((order) => order.deliveryDay <= nextDay);
+  const deliveredCount = deliveredOrders.reduce((sum, order) => sum + order.quantity, 0);
+  const replacedCount = deliveredOrders.reduce(
+    (sum, order) => sum + (order.replacementShipIds?.length ?? 0),
+    0,
+  );
+  const automaticReplacement = orderAutomaticReplacements(
+    { ...delivery.state, routes: state.routes },
     nextDay,
-    delivery.state.cash,
     baseScenario.shipTypes,
   );
-  const finalCash = automaticSale.cash;
+  const finalCash = automaticReplacement.state.cash;
   const justCompletedGoal =
     state.primaryGoalCompletedOnDay === null &&
     (finalCash >= CASH_GOAL || totalPassengers >= PASSENGER_GOAL);
@@ -1292,7 +1554,7 @@ export function advanceGameDay(
     revenue,
     operatingCost,
     overhead,
-    profit: profit - automaticMaintenance.cost + automaticSale.revenue,
+    profit: profit - automaticMaintenance.cost,
     passengers,
     activeEventIds: campaignDay.activeEventIds,
     announcedEventIds: campaignDay.announcedEventIds,
@@ -1303,18 +1565,23 @@ export function advanceGameDay(
       ...state,
       day: nextDay,
       cash: finalCash,
-      fleet: automaticSale.fleet,
-      routes: automaticSale.routes,
-      shipPurchaseOrders: delivery.state.shipPurchaseOrders,
+      fleet: automaticReplacement.state.fleet,
+      routes: automaticReplacement.state.routes,
+      shipPurchaseOrders: automaticReplacement.state.shipPurchaseOrders,
       nextShipNumber: delivery.state.nextShipNumber,
-      shipyardMarket: refreshShipyardMarket(state, baseScenario.shipTypes, nextDay),
-      history: [...state.history, record].slice(-365),
-      fuelMarket: [...state.fuelMarket, fuelPriceRecord(galaxy, nextDay)].slice(-365),
+      nextPurchaseAgreementNumber: automaticReplacement.state.nextPurchaseAgreementNumber,
+      shipyardMarket: refreshShipyardMarket(automaticReplacement.state, baseScenario.shipTypes, nextDay),
+      history: [...state.history, record].slice(-90),
+      fuelMarket: [...state.fuelMarket, fuelPriceRecord(galaxy, nextDay)].slice(-90),
       status: lost ? "lost" : "playing",
       primaryGoalCompletedOnDay,
     },
-    message: automaticSale.soldShipNames.length > 0
-      ? `已按船龄策略出售 ${automaticSale.soldShipNames.length} 艘舰船，回收 ${automaticSale.revenue.toFixed(0)} Cr。`
+    message: replacedCount > 0
+      ? `船厂今日交付并自动替换 ${replacedCount} 艘到龄舰船；航线与客舱方案已转移到新船。`
+      : automaticReplacement.orderedShipNames.length > 0
+      ? `已为 ${automaticReplacement.orderedShipNames.length} 艘到龄舰船订购同型号新船；旧船将在交付前继续运营。${automaticReplacement.deferredCount > 0 ? ` 另有 ${automaticReplacement.deferredCount} 艘因资金不足等待采购。` : ""}`
+      : automaticReplacement.deferredCount > 0
+      ? `${automaticReplacement.deferredCount} 艘舰船已到更新船龄，但资金不足；旧船继续运营并将在后续每日重试采购。`
       : deliveredCount > 0
       ? `船厂今日交付 ${deliveredCount} 艘舰船；请为新船分配统一配置方案。`
       : automaticMaintenance.maintainedShipNames.length > 0

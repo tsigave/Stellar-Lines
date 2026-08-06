@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { loadStoredGame, persistGame, type StorageLike } from "../src/web/storage.js";
 import {
   buildJourneyOptions,
+  buildFareCurveData,
   buildRouteServices,
   assignShipsToFleetConfiguration,
   buyShip,
   chooseJourneys,
+  explainJourneyChoice,
   createGeneratedGameEvents,
   createGeneratedScenario,
   createFleetConfiguration,
@@ -19,9 +22,12 @@ import {
   deterministicVariation,
   eventIntensity,
   generateMarketDemands,
+  allReferenceTimes,
   marketEventDemandMultiplier,
+  migrateGameState,
   generateGalaxy,
   gameWorldLegs,
+  isGameState,
   fuelPriceRecord,
   estimateFuelConsumption,
   fleetConfigurationForShip,
@@ -30,7 +36,9 @@ import {
   placeShipPurchaseAgreement,
   purchaseAgreementDiscount,
   quoteShipPurchaseAgreement,
+  recommendRouteFares,
   passengerSatisfactionByClass,
+  PASSENGER_TYPES,
   PROOF_OF_CONCEPT_SCENARIO,
   simulateCampaign,
   shortestReferenceTime,
@@ -41,7 +49,7 @@ import {
   MAINTENANCE_DUE_HOURS,
   MAINTENANCE_REQUIRED_HOURS,
   setAutoMaintenanceThreshold,
-  setAutoSellAge,
+  setAutoReplacementAge,
   updateFleetConfiguration,
   advanceGameDay,
   closePlayerRoute,
@@ -91,7 +99,7 @@ function market(passengerClass: PassengerClass, potentialPassengers = 1_000): Ma
   return {
     originPortId: "a",
     destinationPortId: "c",
-    passengerClass,
+    passengerType: passengerClass === "economy" ? "budget" : passengerClass === "premium" ? "luxury" : "business",
     potentialPassengers,
     referenceTimeHours: 10,
     acceptableFare: passengerClass === "economy" ? 180 : 320,
@@ -112,11 +120,15 @@ function service(overrides: Partial<ServiceLeg> & Pick<ServiceLeg, "id" | "fromP
     departuresPerWeek: overrides.departuresPerWeek ?? 14,
     seatsPerDeparture: overrides.seatsPerDeparture ?? 500,
     dailySeatCapacity: overrides.dailySeatCapacity ?? 1_000,
+    ...(overrides.seatsPerDepartureByClass ? { seatsPerDepartureByClass: overrides.seatsPerDepartureByClass } : {}),
+    ...(overrides.dailySeatCapacityByClass ? { dailySeatCapacityByClass: overrides.dailySeatCapacityByClass } : {}),
+    ...(overrides.operatingCostPerPassenger !== undefined ? { operatingCostPerPassenger: overrides.operatingCostPerPassenger } : {}),
     fareByClass: overrides.fareByClass ?? { economy: 120, business: 160, premium: 240 },
     comfort: overrides.comfort ?? 70,
     reputation: overrides.reputation ?? 70,
     onTimeRate: overrides.onTimeRate ?? 0.95,
     satisfactionByClass: overrides.satisfactionByClass ?? { economy: 75, business: 75, premium: 75 },
+    ...(overrides.baseCostBreakdown ? { baseCostBreakdown: overrides.baseCostBreakdown } : {}),
     dailyOperatingCost: overrides.dailyOperatingCost ?? 2_000,
   };
 }
@@ -208,14 +220,15 @@ test("商务旅客比经济旅客更偏好较贵的直达服务", () => {
     const options = buildJourneyOptions(
       [direct, firstConnection, secondConnection],
       targetMarket,
+      { allowTransfers: true },
     );
     const choice = chooseJourneys(targetMarket, options);
-    const directOption = options.find((option) => option.serviceLegIds[0] === "direct")!;
+    const directOptions = options.filter((option) => option.serviceLegIds[0] === "direct");
     const totalRequested = [...choice.requestedByOption.values()].reduce(
       (sum, value) => sum + value,
       0,
     );
-    return choice.requestedByOption.get(directOption.id)! / totalRequested;
+    return directOptions.reduce((sum, option) => sum + (choice.requestedByOption.get(option.id) ?? 0), 0) / totalRequested;
   };
 
   assert.ok(directShare("business") > directShare("economy"));
@@ -235,7 +248,7 @@ test("共享航段永远不会超过可用运力", () => {
     market("economy", 100_000),
     { ...market("economy", 100_000), originPortId: "d" },
   ];
-  const settlement = simulateDay({ markets, services: [aToB, dToB, shared] });
+  const settlement = simulateDay({ markets, services: [aToB, dToB, shared], journeySearch: { allowTransfers: true } });
   const sharedResult = settlement.services.find((item) => item.serviceLegId === "b-c")!;
 
   assert.ok(sharedResult.passengers <= 100 + 1e-9);
@@ -344,6 +357,185 @@ test("同一种子和日期产生完全相同的平滑需求变化", () => {
   assert.equal(first, second);
   assert.ok(Math.abs(first - nextDay) < 0.02);
   assert.ok(first >= 0.92 && first <= 1.08);
+});
+
+test("v0.5 OD 需求按四类旅客生成且不再把旅客类型当作舱位", () => {
+  const ports: Starport[] = ["a", "b"].map((id, index) => ({
+    id, systemId: id, name: id, population: 60 + index * 10, economy: 70,
+    business: 65, tourism: 75, administration: 55, portLevel: 3,
+    dailyCapacity: 1_000, fuelPrice: 2, serviceFee: 100,
+  }));
+  const legs: WorldLeg[] = [{
+    id: "a-b", fromPortId: "a", toPortId: "b", mode: "hyperspace",
+    distance: 30, hazard: 0, timeModifier: 1, fuelModifier: 1, isOpen: true,
+  }];
+  const markets = generateMarketDemands(ports, allReferenceTimes(ports, legs), { day: 12, seed: 77 });
+  const outbound = markets.filter((entry) => entry.originPortId === "a" && entry.destinationPortId === "b");
+  assert.deepEqual(new Set(outbound.map((entry) => entry.passengerType)), new Set(PASSENGER_TYPES));
+  assert.equal(outbound.length, 4);
+  assert.ok(outbound.every((entry) => !("passengerClass" in entry)));
+});
+
+test("v0.5 四类旅客可在三舱之间选择且分舱容量独立", () => {
+  const cabinService = service({
+    id: "three-cabins", fromPortId: "a", toPortId: "c",
+    dailySeatCapacity: 180,
+    dailySeatCapacityByClass: { economy: 100, business: 50, premium: 30 },
+    seatsPerDepartureByClass: { economy: 100, business: 50, premium: 30 },
+    fareByClass: { economy: 100, business: 100, premium: 100 },
+  });
+  const leisureMarket: MarketDemand = {
+    originPortId: "a", destinationPortId: "c", passengerType: "leisure",
+    potentialPassengers: 1_000, referenceTimeHours: 10, acceptableFare: 180,
+  };
+  const options = buildJourneyOptions([cabinService], leisureMarket);
+  assert.deepEqual(new Set(options.map((option) => option.cabinClass)), new Set(["economy", "business", "premium"]));
+  const settlement = simulateDay({ markets: [leisureMarket], services: [cabinService] });
+  const result = settlement.services[0]!;
+  assert.ok(result.passengersByClass.economy <= 100 + 1e-9);
+  assert.ok(result.passengersByClass.business <= 50 + 1e-9);
+  assert.ok(result.passengersByClass.premium <= 30 + 1e-9);
+});
+
+test("v0.5 推荐价使用完整成本、55%参考上座率并严格加价20%", () => {
+  const costed = service({
+    id: "costed", routeId: "route-costed", fromPortId: "a", toPortId: "c",
+    dailySeatCapacity: 180,
+    dailySeatCapacityByClass: { economy: 100, business: 50, premium: 30 },
+    seatsPerDepartureByClass: { economy: 100, business: 50, premium: 30 },
+    baseCostBreakdown: {
+      fuel: 800, staff: 500, port: 200, flightMaintenance: 300,
+      fixedMaintenance: 400, ageSurcharge: 100, depreciation: 600,
+      delay: 100, other: 0, total: 3_000,
+    },
+    dailyOperatingCost: 3_000,
+  });
+  const recommendation = recommendRouteFares("route-costed", [costed]);
+  for (const cabinClass of ["economy", "business", "premium"] as const) {
+    assert.ok(recommendation[cabinClass].allocatedDailyCost > 0);
+    assert.equal(recommendation[cabinClass].referencePassengers, costed.dailySeatCapacityByClass![cabinClass] * 0.55);
+    assert.ok(Math.abs(recommendation[cabinClass].recommendedFare - recommendation[cabinClass].breakEvenFare * 1.2) < 1e-9);
+    assert.equal(recommendation[cabinClass].confidence, "low");
+  }
+});
+
+test("v0.5 评价原因和图表数据均由实际数值生成且可复现", () => {
+  const targetMarket: MarketDemand = {
+    originPortId: "a", destinationPortId: "c", passengerType: "business",
+    potentialPassengers: 200, referenceTimeHours: 12, acceptableFare: 150,
+  };
+  const option = buildJourneyOptions([service({
+    id: "explain", fromPortId: "a", toPortId: "c", inVehicleHours: 8,
+    fareByClass: { economy: 120, business: 210, premium: 400 }, onTimeRate: 0.82,
+  })], targetMarket).find((entry) => entry.cabinClass === "business")!;
+  const explanation = explainJourneyChoice(targetMarket, option);
+  assert.ok(explanation.negative.some((reason) => reason.text.includes("高于可接受价 40%")));
+  assert.ok(explanation.positive.some((reason) => reason.text.includes("直达")));
+
+  const evaluate = (fare: number) => ({ passengers: Math.max(0, 120 - fare / 2), profit: fare * 2 - 100, revenue: fare * 2 });
+  const first = buildFareCurveData(200, evaluate);
+  const second = buildFareCurveData(200, evaluate);
+  assert.deepEqual(first, second);
+  assert.ok(first.every((point) => point.passengerLow <= point.passengers && point.passengers <= point.passengerHigh));
+  assert.ok(first.every((point) => point.profitLow <= point.profit && point.profit <= point.profitHigh));
+});
+
+test("v0.5 航段票款收入减全部成本严格等于净利润", () => {
+  const costed = service({
+    id: "accounting", fromPortId: "a", toPortId: "c",
+    dailySeatCapacity: 100,
+    baseCostBreakdown: {
+      fuel: 200, staff: 100, port: 80, flightMaintenance: 90,
+      fixedMaintenance: 110, ageSurcharge: 20, depreciation: 150,
+      delay: 30, other: 10, total: 790,
+    },
+    dailyOperatingCost: 790,
+    operatingCostPerPassenger: 2,
+  });
+  const settlement = simulateDay({ markets: [market("economy", 60)], services: [costed] }).services[0]!;
+  assert.ok(Math.abs(settlement.ticketRevenue - settlement.operatingCost - settlement.netProfit) < 1e-9);
+  assert.ok(settlement.costBreakdown.depreciation > 0);
+});
+
+test("v0.5 普通日燃料约占完整成本四分之一且固定维护不再主导成本", () => {
+  const settlement = simulateCampaign(PROOF_OF_CONCEPT_SCENARIO, {
+    startDay: 1,
+    numberOfDays: 1,
+  }).days[0]!.settlement;
+  const costs = settlement.services.reduce((totals, serviceResult) => ({
+    fuel: totals.fuel + serviceResult.costBreakdown.fuel,
+    fixedMaintenance: totals.fixedMaintenance + serviceResult.costBreakdown.fixedMaintenance,
+    total: totals.total + serviceResult.costBreakdown.total,
+  }), { fuel: 0, fixedMaintenance: 0, total: 0 });
+  const fuelShare = costs.fuel / costs.total;
+  const fixedMaintenanceShare = costs.fixedMaintenance / costs.total;
+
+  assert.ok(fuelShare >= 0.23 && fuelShare <= 0.27);
+  assert.ok(fixedMaintenanceShare <= 0.22);
+  assert.ok(fixedMaintenanceShare < fuelShare);
+});
+
+test("自动存档超出配额时逐级缩短历史且不会抛出异常", () => {
+  const generated = createGeneratedScenario({ ...DEFAULT_GALAXY_CONFIG, seed: "storage-quota" });
+  const game = createNewGame(
+    generated.galaxy.config,
+    generated.galaxy,
+    generated.galaxy.ports[0]!.id,
+    generated.scenario.shipTypes,
+  );
+  const history = Array.from({ length: 90 }, (_, index) => ({
+    day: index + 1,
+    cash: game.cash,
+    revenue: 0,
+    operatingCost: 0,
+    overhead: 0,
+    profit: 0,
+    passengers: 0,
+    activeEventIds: ["x".repeat(1_500)],
+    announcedEventIds: [],
+    routes: [],
+  }));
+  const bloated = { ...game, history };
+  let stored = "";
+  const limitedStorage: StorageLike = {
+    getItem: () => stored || null,
+    setItem: (_key, value) => {
+      if (value.length > 20_000) throw new Error("quota exceeded");
+      stored = value;
+    },
+  };
+  const result = persistGame(limitedStorage, "save", bloated);
+  assert.equal(result.saved, true);
+  assert.equal(result.retainedHistoryDays, 7);
+  const restored = loadStoredGame(limitedStorage, "save") as GameState;
+  assert.equal(restored.history.length, 7);
+
+  const unavailable: StorageLike = {
+    getItem: () => null,
+    setItem: () => { throw new Error("disabled"); },
+  };
+  assert.doesNotThrow(() => persistGame(unavailable, "save", bloated));
+  assert.equal(persistGame(unavailable, "save", bloated).saved, false);
+});
+
+test("v0.5 旧自动出售存档会迁移为交付后自动更新策略", () => {
+  const generated = createGeneratedScenario({ ...DEFAULT_GALAXY_CONFIG, seed: "replacement-migration" });
+  const game = createNewGame(
+    generated.galaxy.config,
+    generated.galaxy,
+    generated.galaxy.ports[0]!.id,
+    generated.scenario.shipTypes,
+  );
+  const legacy = {
+    ...game,
+    version: 8,
+    autoSellAgeYears: 5,
+  };
+  delete (legacy as { autoReplacementAgeYears?: number | null }).autoReplacementAgeYears;
+  const migrated = migrateGameState(legacy);
+  assert.ok(isGameState(migrated));
+  assert.equal((migrated as GameState).autoReplacementAgeYears, 5);
+  assert.ok(!("autoSellAgeYears" in (migrated as object)));
 });
 
 test("概念验证版世界航段可双向用于理论旅行时间", () => {
@@ -776,7 +968,7 @@ test("多型号采购协议叠加批量优惠，热度延长排产且现货次�
   assert.equal(game.fleet.length, 1);
 });
 
-test("船龄提高固定维护并降低舒适度，达到阈值后自动出售", () => {
+test("船龄提高固定维护并降低舒适度，到龄后订购新船且交付时无缝替换", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
   const types = generated.scenario.shipTypes;
   const meridian = types.find((ship) => ship.id === "meridian-liner")!;
@@ -787,11 +979,31 @@ test("船龄提高固定维护并降低舒适度，达到阈值后自动出售",
   assert.ok(fleetFixedMaintenanceCost(game.fleet, types, agedDay).total > fleetFixedMaintenanceCost(game.fleet, types, 1).total);
   assert.ok(shipComfortAtAge(ship, meridian, agedDay) < meridian.comfort);
 
-  game = setAutoSellAge({ ...game, day: 720, primaryGoalCompletedOnDay: 1 }, 2).state;
-  const cashBeforeSale = game.cash;
+  game = {
+    ...game,
+    fleet: game.fleet.map((item) => ({
+      ...item,
+      routeId: "route-preserved",
+      configurationId: "configuration-preserved",
+    })),
+  };
+  game = setAutoReplacementAge({ ...game, day: 720, primaryGoalCompletedOnDay: 1 }, 2).state;
   game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
-  assert.equal(game.fleet.length, 0);
-  assert.ok(game.cash > cashBeforeSale - DAILY_COMPANY_OVERHEAD - meridian.fixedMaintenanceCostPerDay * 2);
+  assert.equal(game.fleet.length, 1);
+  assert.equal(game.fleet[0]!.id, ship.id);
+  assert.equal(game.shipPurchaseOrders.length, 1);
+  assert.deepEqual(game.shipPurchaseOrders[0]!.replacementShipIds, [ship.id]);
+
+  const deliveryDay = game.shipPurchaseOrders[0]!.deliveryDay;
+  const cashBeforeDelivery = game.cash;
+  game = deliverShipPurchaseOrders({ ...game, day: deliveryDay }, types, deliveryDay).state;
+  assert.equal(game.fleet.length, 1);
+  assert.notEqual(game.fleet[0]!.id, ship.id);
+  assert.equal(game.fleet[0]!.routeId, "route-preserved");
+  assert.equal(game.fleet[0]!.configurationId, "configuration-preserved");
+  assert.equal(game.fleet[0]!.commissionedDay, deliveryDay);
+  assert.equal(game.shipPurchaseOrders.length, 0);
+  assert.ok(game.cash > cashBeforeDelivery);
 });
 
 test("固定维护费按供应商与系列规模折扣乘算叠加并进入日结算", () => {

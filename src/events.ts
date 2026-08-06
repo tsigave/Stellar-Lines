@@ -1,6 +1,6 @@
 import type {
   MarketEvent,
-  PassengerClass,
+  PassengerType,
   Starport,
   WorldLeg,
 } from "./types.js";
@@ -33,14 +33,14 @@ export function marketEventDemandMultiplier(
   day: number,
   originPortId: string,
   destinationPortId: string,
-  passengerClass: PassengerClass,
+  passengerType: PassengerType,
 ): number {
   return events.reduce((multiplier, event) => {
     const intensity = eventIntensity(event, day);
     if (intensity <= 0 || !affectsMarket(event, originPortId, destinationPortId)) {
       return multiplier;
     }
-    return multiplier * blendedMultiplier(event.demandModifiers[passengerClass], intensity);
+    return multiplier * blendedMultiplier(event.demandModifiers[passengerType], intensity);
   }, 1);
 }
 

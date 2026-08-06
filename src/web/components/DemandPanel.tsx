@@ -1,4 +1,4 @@
-import { PASSENGER_CLASSES, type DaySettlement, type GeneratedGalaxy } from "../../types.js";
+import { PASSENGER_TYPES, type DaySettlement, type GeneratedGalaxy } from "../../types.js";
 import { formatNumber, formatPopulation } from "../format.js";
 
 interface DemandPanelProps {
@@ -7,7 +7,7 @@ interface DemandPanelProps {
   selectedPortId: string;
 }
 
-const CLASS_LABELS = { economy: "经济", business: "商务", premium: "高端" } as const;
+const TYPE_LABELS = { business: "商务", leisure: "休闲旅游", budget: "廉价", luxury: "高端" } as const;
 
 export function DemandPanel({ galaxy, settlement, selectedPortId }: DemandPanelProps) {
   const port = galaxy.ports.find((candidate) => candidate.id === selectedPortId);
@@ -18,13 +18,13 @@ export function DemandPanel({ galaxy, settlement, selectedPortId }: DemandPanelP
     (market) => market.market.originPortId === selectedPortId,
   );
   const classTotals = Object.fromEntries(
-    PASSENGER_CLASSES.map((passengerClass) => [
-      passengerClass,
+    PASSENGER_TYPES.map((passengerType) => [
+      passengerType,
       outbound
-        .filter((market) => market.market.passengerClass === passengerClass)
+        .filter((market) => market.market.passengerType === passengerType)
         .reduce((sum, market) => sum + market.market.potentialPassengers, 0),
     ]),
-  ) as Record<(typeof PASSENGER_CLASSES)[number], number>;
+  ) as Record<(typeof PASSENGER_TYPES)[number], number>;
   const destinationMap = new Map<string, { potential: number; actual: number }>();
   for (const market of outbound) {
     const current = destinationMap.get(market.market.destinationPortId) ?? { potential: 0, actual: 0 };
@@ -57,11 +57,11 @@ export function DemandPanel({ galaxy, settlement, selectedPortId }: DemandPanelP
         <span>容量 <strong>{formatNumber(port.dailyCapacity)}</strong></span>
       </div>
       <div className="class-demand">
-        {PASSENGER_CLASSES.map((passengerClass) => (
-          <div key={passengerClass}>
-            <span className={`class-dot ${passengerClass}`} />
-            <span>{CLASS_LABELS[passengerClass]}</span>
-            <strong>{formatNumber(classTotals[passengerClass])}</strong>
+        {PASSENGER_TYPES.map((passengerType) => (
+          <div key={passengerType}>
+            <span className={`class-dot ${passengerType}`} />
+            <span>{TYPE_LABELS[passengerType]}</span>
+            <strong>{formatNumber(classTotals[passengerType])}</strong>
           </div>
         ))}
       </div>

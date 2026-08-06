@@ -89,6 +89,8 @@ button { color: inherit; }
   background: var(--teal);
   box-shadow: 0 0 8px var(--teal);
 }
+.header-indicator.warning { color: var(--amber); }
+.header-indicator.warning i { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
 
 .workspace {
   min-height: 0;
@@ -534,7 +536,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .port-attributes { margin: 13px 0 12px; display: flex; flex-wrap: wrap; gap: 6px; }
 .port-attributes span { padding: 6px 8px; color: #718a96; font-size: 12px; background: rgba(23, 44, 55, 0.48); }
 .port-attributes strong { margin-left: 2px; color: #a9bdc5; font-weight: 600; }
-.class-demand { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--border); }
+.class-demand { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--border); }
 .class-demand > div { padding: 8px 7px; display: grid; grid-template-columns: auto 1fr; gap: 3px 5px; border-right: 1px solid var(--border); }
 .class-demand > div:last-child { border-right: 0; }
 .class-demand span:not(.class-dot) { color: var(--muted); font-size: 12px; }
@@ -543,6 +545,9 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .class-dot.economy { background: #56cfc4; }
 .class-dot.business { background: #e6bb64; }
 .class-dot.premium { background: #bc80db; }
+.class-dot.leisure { background: #62b8f0; }
+.class-dot.budget { background: #56cfc4; }
+.class-dot.luxury { background: #bc80db; }
 .subheading { margin: 16px 0 9px; display: flex; justify-content: space-between; color: #a9bdc6; font-size: 12px; }
 .subheading small { color: var(--faint); font-size: 12px; }
 .destination-list { display: flex; flex-direction: column; gap: 10px; }
@@ -577,7 +582,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .goal-card small { display: block; margin-top: 6px; color: #687f88; font-size: 12px; }
 .goal-progress { height: 4px; margin-top: 9px; background: rgba(79, 113, 120, 0.15); }
 .goal-progress i { display: block; height: 100%; background: var(--teal); box-shadow: 0 0 6px rgba(80, 223, 206, 0.45); }
-.passenger-preferences { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border); }
+.passenger-preferences { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); }
 .passenger-preferences > div { padding: 7px 6px; display: flex; flex-direction: column; gap: 3px; border-right: 1px solid var(--border); }
 .passenger-preferences > div:last-child { border-right: 0; }
 .passenger-preferences strong { color: #bed0d5; font-size: 12px; }
@@ -599,6 +604,78 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .route-actions button { flex: 1; height: 25px; border: 1px solid rgba(101, 145, 157, 0.18); color: #8ea5ad; background: rgba(12, 26, 35, 0.8); font-size: 12px; cursor: pointer; }
 .route-actions button:hover { border-color: var(--border-strong); color: #d3fff7; }
 .route-actions .danger-button:hover { border-color: rgba(255, 124, 121, 0.4); color: #ffaaa6; }
+.route-class-loads { margin-top: 7px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.route-class-loads span { padding: 4px 5px; color: #8da5ad; font-size: 12px; text-align: center; background: rgba(5, 15, 22, 0.52); }
+.route-warning { margin-top: 7px; color: #e8bb74; font-size: 12px; }
+.route-actions .route-detail-button { flex: 1.7; color: #bff4ea; border-color: rgba(80, 223, 206, 0.28); }
+
+.pricing-heading { display: flex; justify-content: space-between; }
+.pricing-heading span { color: var(--muted); font-size: 12px; }
+.cabin-fare-editor { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.cabin-fare-editor label { min-width: 0; padding: 10px; display: grid; gap: 7px; border: 1px solid var(--border); background: rgba(5, 15, 22, 0.55); }
+.cabin-fare-editor label > span { color: #c8dadd; font-size: 13px; font-weight: 650; }
+.cabin-fare-editor label > small { min-height: 31px; color: #76909a; font-size: 12px; line-height: 1.35; }
+.cabin-fare-editor label > button { min-height: 29px; border: 1px solid rgba(90, 144, 152, 0.2); color: #91aaaF; font-size: 12px; background: rgba(11, 29, 37, 0.72); cursor: pointer; }
+.cabin-fare-editor.compact { grid-template-columns: 1fr; }
+.cabin-fare-editor.compact label { grid-template-columns: 65px 90px 1fr 84px; align-items: center; padding: 7px; }
+.cabin-fare-editor.compact label > small { min-height: 0; }
+
+.route-economics-page { min-height: 0; overflow: auto; padding: 16px 18px 32px; background: radial-gradient(circle at 75% 0%, rgba(36, 118, 113, 0.1), transparent 35%); }
+.route-detail-header { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 18px; padding: 15px 17px; border: 1px solid var(--border); background: rgba(8, 20, 29, 0.82); }
+.route-detail-header > button { padding: 8px 11px; border: 1px solid var(--border); color: #9fb5bd; background: rgba(10, 27, 36, 0.7); cursor: pointer; }
+.route-detail-header h1 { margin: 3px 0; color: #eefbfb; font-size: 24px; font-weight: 650; }
+.route-detail-header p { margin: 0; color: var(--muted); font-size: 13px; }
+.route-profit { display: flex; flex-direction: column; align-items: flex-end; }
+.route-profit span { color: var(--muted); font-size: 12px; }
+.route-profit strong { margin-top: 4px; font-size: 22px; }
+.route-detail-tabs { margin-top: 10px; display: flex; border-bottom: 1px solid var(--border); }
+.route-detail-tabs button { min-width: 110px; padding: 11px 19px; border: 0; border-bottom: 2px solid transparent; color: #78909a; background: transparent; cursor: pointer; }
+.route-detail-tabs button.active { border-bottom-color: var(--teal); color: #d8fff8; background: rgba(34, 106, 103, 0.12); }
+.route-window-picker { padding: 10px 0; display: flex; gap: 6px; align-items: center; }
+.route-window-picker button, .curve-class-picker button { padding: 6px 10px; border: 1px solid var(--border); color: #879fa8; font-size: 12px; background: rgba(8, 22, 30, 0.7); cursor: pointer; }
+.route-window-picker button.active, .curve-class-picker button.active { color: #d8fff8; border-color: var(--border-strong); background: rgba(32, 108, 104, 0.2); }
+.route-window-picker > span { margin-left: auto; color: var(--muted); font-size: 12px; }
+.route-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.route-detail-card { min-width: 0; padding: 15px; border: 1px solid var(--border); background: rgba(8, 20, 29, 0.78); }
+.route-detail-card.span-2 { grid-column: span 2; }
+.route-detail-card.span-3 { grid-column: span 3; }
+.route-detail-card h2 { margin: 0 0 12px; font-size: 17px; }
+.route-detail-card h3 { margin: 13px 0 6px; color: #9db1b8; font-size: 13px; }
+.route-detail-card p { color: var(--muted); font-size: 13px; }
+.accessible-table { max-width: 100%; overflow: auto; }
+.accessible-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.accessible-table th, .accessible-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.accessible-table th:first-child, .accessible-table td:first-child { text-align: left; }
+.accessible-table thead th { color: #89a2aa; font-size: 12px; font-weight: 600; background: rgba(16, 38, 48, 0.5); }
+.accessible-table tbody td { color: #bfd0d5; }
+.accessible-table tfoot th { color: #e1efef; }
+.metric-list { margin: 0; }
+.metric-list > div { padding: 9px 0; display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.metric-list dt { color: var(--muted); font-size: 13px; }
+.metric-list dd { margin: 0; color: #d2e2e5; font-size: 14px; font-weight: 600; }
+.history-bars { height: 86px; padding: 6px 7px 0; display: flex; align-items: flex-end; gap: 3px; border-bottom: 1px solid var(--border); }
+.history-bars i { min-width: 3px; flex: 1; background: var(--teal); opacity: 0.72; }
+.history-bars i.negative { background: var(--red); }
+.passenger-evaluation-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.evaluation-heading { display: flex; justify-content: space-between; align-items: baseline; }
+.evaluation-heading strong { color: var(--teal-soft); font-size: 16px; }
+.reason-list { min-height: 52px; margin: 0; padding-left: 18px; color: #9eb2b9; font-size: 12px; line-height: 1.55; }
+.reason-list.positive li::marker { color: var(--teal); }
+.reason-list.negative li::marker { color: var(--red); }
+.pricing-actions { margin-top: 11px; display: flex; justify-content: flex-end; gap: 8px; }
+.pricing-actions > button { min-height: 36px; padding: 0 14px; border: 1px solid var(--border); color: #91a9b1; background: rgba(8, 23, 31, 0.7); cursor: pointer; }
+.pricing-actions .primary-action { width: auto; margin: 0; }
+.curve-class-picker { display: flex; gap: 5px; }
+.cost-stack { height: 18px; display: flex; gap: 1px; background: rgba(4, 11, 17, 0.8); }
+.cost-stack i:nth-child(1) { background: #55cdbf; }.cost-stack i:nth-child(2) { background: #65a9dc; }.cost-stack i:nth-child(3) { background: #e1b65f; }.cost-stack i:nth-child(4) { background: #8a8fd7; }.cost-stack i:nth-child(5) { background: #b87bd2; }.cost-stack i:nth-child(6) { background: #d88472; }.cost-stack i:nth-child(7) { background: #7f9ca6; }.cost-stack i:nth-child(8) { background: #e07070; }.cost-stack i:nth-child(9) { background: #596d75; }
+
+@media (max-width: 900px) {
+  .route-detail-grid, .passenger-evaluation-grid { grid-template-columns: 1fr; }
+  .route-detail-card.span-2, .route-detail-card.span-3 { grid-column: span 1; }
+  .cabin-fare-editor { grid-template-columns: 1fr; }
+  .route-detail-header { grid-template-columns: auto 1fr; }
+  .route-profit { grid-column: 2; align-items: flex-start; }
+}
 .event-card { padding: 9px 10px; border-left: 2px solid #596f77; background: rgba(11, 25, 34, 0.52); }
 .event-card.active { border-left-color: var(--amber); background: rgba(117, 81, 31, 0.1); }
 .event-card span { color: #8aa0a8; font-size: 12px; text-transform: uppercase; }

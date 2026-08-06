@@ -1,8 +1,17 @@
-import { DEFAULT_DEMAND_PARAMETERS, PASSENGER_SATISFACTION_WEIGHTS } from "./parameters.js";
+import {
+  DEFAULT_DEMAND_PARAMETERS,
+  FIXED_MAINTENANCE_COST_SCALE,
+  FUEL_OPERATING_COST_SCALE,
+  PASSENGER_SATISFACTION_WEIGHTS,
+  PASSENGER_TYPE_SATISFACTION_WEIGHTS,
+} from "./parameters.js";
 import { estimateFuelConsumption } from "./fuel.js";
 import {
   PASSENGER_CLASSES,
+  PASSENGER_TYPES,
   type PassengerClass,
+  type PassengerType,
+  type RouteCostBreakdown,
   type Route,
   type RouteStop,
   type ServiceLeg,
@@ -49,6 +58,28 @@ export function passengerSatisfactionByClass(
       factors.condition * weights.condition;
     return [passengerClass, Number(score.toFixed(1))];
   })) as Record<PassengerClass, number>;
+}
+
+export function passengerSatisfactionByType(
+  distance: number,
+  inVehicleHours: number,
+  comfort: number,
+  onTimeRate: number,
+  condition: number,
+): Record<PassengerType, number> {
+  const speedLyPerDay = distance / Math.max(1 / 24, inVehicleHours / 24);
+  const factors = {
+    speed: clampScore((speedLyPerDay / MAX_INTERSTELLAR_SPEED_LY_PER_DAY) * 100),
+    comfort: clampScore(comfort),
+    reliability: clampScore(onTimeRate * 100),
+    condition: clampScore(condition),
+  };
+  return Object.fromEntries(PASSENGER_TYPES.map((passengerType) => {
+    const weights = PASSENGER_TYPE_SATISFACTION_WEIGHTS[passengerType];
+    const score = factors.speed * weights.speed + factors.comfort * weights.comfort +
+      factors.reliability * weights.reliability + factors.condition * weights.condition;
+    return [passengerType, Number(score.toFixed(1))];
+  })) as Record<PassengerType, number>;
 }
 
 interface ExpandedStop extends RouteStop {
@@ -188,12 +219,12 @@ export function buildRouteServices(
   const portsById = new Map(ports.map((port) => [port.id, port]));
   validateRoute(route, ship, portsById);
   const expandedStops = expandRouteStops(route);
-  const seatsPerDepartureByClass = route.cabinCapacityByClass;
-  const installedCabins = seatsPerDepartureByClass ?? {
-    economy: ship.seats,
-    business: 0,
-    premium: 0,
+  const installedCabins = route.cabinCapacityByClass ?? {
+    economy: Math.floor(ship.seats * 0.78),
+    business: Math.floor(ship.seats * 0.15),
+    premium: ship.seats - Math.floor(ship.seats * 0.78) - Math.floor(ship.seats * 0.15),
   };
+  const seatsPerDepartureByClass = installedCabins;
   const seatsPerDeparture = PASSENGER_CLASSES.reduce(
     (sum, passengerClass) => sum + installedCabins[passengerClass],
     0,
@@ -210,6 +241,10 @@ export function buildRouteServices(
     fuelLoadEmpty: number;
     fuelLoadFull: number;
     fuelCostPerPassenger: number;
+    emptyFuelCost: number;
+    staffCost: number;
+    flightMaintenanceCost: number;
+    portCost: number;
     operatingCost: number;
   }> = [];
 
@@ -270,9 +305,9 @@ export function buildRouteServices(
         seatsPerDeparture,
       ).requiredFuelLoadUnits * leg.fuelModifier,
     0);
-    const emptyFuelCost = fuelConsumptionEmpty * fromPort.fuelPrice;
+    const emptyFuelCost = fuelConsumptionEmpty * fromPort.fuelPrice * FUEL_OPERATING_COST_SCALE;
     const fuelCostPerPassenger = seatsPerDeparture > 0
-      ? ((fuelConsumptionFull - fuelConsumptionEmpty) * fromPort.fuelPrice) / seatsPerDeparture
+      ? ((fuelConsumptionFull - fuelConsumptionEmpty) * fromPort.fuelPrice * FUEL_OPERATING_COST_SCALE) / seatsPerDeparture
       : 0;
     const operatingCost =
       emptyFuelCost +
@@ -290,6 +325,10 @@ export function buildRouteServices(
       fuelLoadEmpty,
       fuelLoadFull,
       fuelCostPerPassenger,
+      emptyFuelCost,
+      staffCost: travelHours * ship.crewCostPerFlightHour,
+      flightMaintenanceCost: travelHours * ship.maintenancePerFlightHour,
+      portCost: toPort.serviceFee,
       operatingCost,
     });
   }
@@ -325,14 +364,12 @@ export function buildRouteServices(
       DEFAULT_DEMAND_PARAMETERS.baseBoardingFare +
       distance * DEFAULT_DEMAND_PARAMETERS.farePerDistance +
       inVehicleHours * DEFAULT_DEMAND_PARAMETERS.farePerReferenceHour;
-    const fareByClass = Object.fromEntries(
-      PASSENGER_CLASSES.map((passengerClass) => [
-        passengerClass,
-        baseFare *
-          route.pricing.multiplier *
-          route.pricing.passengerClassMultiplier[passengerClass],
-      ]),
-    ) as Record<PassengerClass, number>;
+    const fareByClass = route.pricing.fareByClass
+      ? { ...route.pricing.fareByClass }
+      : Object.fromEntries(PASSENGER_CLASSES.map((passengerClass) => [
+          passengerClass,
+          baseFare * route.pricing.multiplier * route.pricing.passengerClassMultiplier[passengerClass],
+        ])) as Record<PassengerClass, number>;
 
     const onTimeRate = Math.min(0.999, options.onTimeRate ?? ship.reliability);
     const dailySeatCapacityByClass = seatsPerDepartureByClass
@@ -341,6 +378,33 @@ export function buildRouteServices(
           (departuresPerWeek * seatsPerDepartureByClass[passengerClass]) / 7,
         ])) as Record<PassengerClass, number>
       : undefined;
+    const departuresPerDay = departuresPerWeek / 7;
+    const cycleOperatingCost = physicalLegs.reduce((sum, item) => sum + item.operatingCost, 0);
+    const allocationWeight = cycleOperatingCost > 0
+      ? operatingCostPerDeparture / cycleOperatingCost
+      : 1 / Math.max(1, physicalLegs.length);
+    const fixedMaintenance = route.economics?.fixedMaintenancePerDay
+      ?? ship.fixedMaintenanceCostPerDay * route.assignedShips * FIXED_MAINTENANCE_COST_SCALE;
+    const ageSurcharge = route.economics?.ageSurchargePerDay ?? 0;
+    const depreciation = route.economics?.depreciationPerDay
+      ?? ship.purchasePrice * route.assignedShips / (8 * 364);
+    const delay = route.economics?.expectedDelayCostPerDay
+      ?? (1 - onTimeRate) * operatingCostPerDeparture * departuresPerDay * 0.2;
+    const baseCostBreakdown: RouteCostBreakdown = {
+      fuel: group.reduce((sum, item) => sum + item.emptyFuelCost, 0) * departuresPerDay,
+      staff: group.reduce((sum, item) => sum + item.staffCost, 0) * departuresPerDay,
+      port: group.reduce((sum, item) => sum + item.portCost, 0) * departuresPerDay,
+      flightMaintenance: group.reduce((sum, item) => sum + item.flightMaintenanceCost, 0) * departuresPerDay,
+      fixedMaintenance: fixedMaintenance * allocationWeight,
+      ageSurcharge: ageSurcharge * allocationWeight,
+      depreciation: depreciation * allocationWeight,
+      delay: delay * allocationWeight,
+      other: 0,
+      total: 0,
+    };
+    baseCostBreakdown.total = Object.entries(baseCostBreakdown)
+      .filter(([key]) => key !== "total")
+      .reduce((sum, [, value]) => sum + value, 0);
     services.push({
       id: `${route.id}:${groupStart}-${index}`,
       routeId: route.id,
@@ -388,7 +452,15 @@ export function buildRouteServices(
         onTimeRate,
         options.shipCondition ?? 100,
       ),
-      dailyOperatingCost: (departuresPerWeek * operatingCostPerDeparture) / 7,
+      satisfactionByPassengerType: passengerSatisfactionByType(
+        distance,
+        inVehicleHours,
+        route.effectiveComfort ?? ship.comfort,
+        onTimeRate,
+        options.shipCondition ?? 100,
+      ),
+      baseCostBreakdown,
+      dailyOperatingCost: baseCostBreakdown.total,
     });
     groupStart = index + 1;
   }

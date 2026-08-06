@@ -1,10 +1,10 @@
 import { marketPairKey } from "./graph.js";
 import { DEFAULT_DEMAND_PARAMETERS } from "./parameters.js";
 import {
-  PASSENGER_CLASSES,
+  PASSENGER_TYPES,
   type DemandParameters,
   type MarketDemand,
-  type PassengerClass,
+  type PassengerType,
   type Starport,
 } from "./types.js";
 
@@ -14,12 +14,12 @@ export interface DemandGenerationOptions {
   demandMultiplier?: (
     origin: Starport,
     destination: Starport,
-    passengerClass: PassengerClass,
+    passengerType: PassengerType,
   ) => number;
   affinityOverride?: (
     origin: Starport,
     destination: Starport,
-    passengerClass: PassengerClass,
+    passengerType: PassengerType,
   ) => number | undefined;
   parameters?: DemandParameters;
 }
@@ -31,7 +31,7 @@ function normalizedLink(a: number, b: number): number {
 export function marketAffinity(
   origin: Starport,
   destination: Starport,
-  passengerClass: PassengerClass,
+  passengerType: PassengerType,
 ): number {
   const economicLink = normalizedLink(origin.economy, destination.economy);
   const businessLink = normalizedLink(origin.business, destination.business);
@@ -42,11 +42,13 @@ export function marketAffinity(
   );
 
   const raw =
-    passengerClass === "economy"
-      ? 0.5 + 0.2 * economicLink + 0.2 * tourismLink + 0.1 * administrativeLink
-      : passengerClass === "business"
+    passengerType === "business"
         ? 0.35 + 0.45 * businessLink + 0.15 * economicLink + 0.05 * administrativeLink
-        : 0.3 + 0.3 * tourismLink + 0.25 * businessLink + 0.15 * administrativeLink;
+      : passengerType === "leisure"
+        ? 0.38 + 0.15 * economicLink + 0.36 * tourismLink + 0.11 * administrativeLink
+      : passengerType === "budget"
+        ? 0.52 + 0.24 * economicLink + 0.15 * tourismLink + 0.09 * administrativeLink
+        : 0.28 + 0.34 * tourismLink + 0.28 * businessLink + 0.1 * administrativeLink;
 
   return Math.min(2.5, Math.max(0.35, raw));
 }
@@ -72,7 +74,7 @@ export function deterministicVariation(
 
 export function acceptableFare(
   referenceTimeHours: number,
-  passengerClass: PassengerClass,
+  passengerType: PassengerType,
   parameters: DemandParameters = DEFAULT_DEMAND_PARAMETERS,
 ): number {
   const estimatedDistance = referenceTimeHours * 5;
@@ -80,7 +82,7 @@ export function acceptableFare(
     parameters.baseBoardingFare +
     estimatedDistance * parameters.farePerDistance +
     referenceTimeHours * parameters.farePerReferenceHour;
-  return standardFare * parameters.acceptableFareMultiplier[passengerClass];
+  return standardFare * parameters.acceptableFareMultiplier[passengerType];
 }
 
 export function generateMarketDemands(
@@ -99,10 +101,10 @@ export function generateMarketDemands(
       const referenceTimeHours = referenceTimes.get(marketPairKey(origin.id, destination.id));
       if (referenceTimeHours === undefined || !Number.isFinite(referenceTimeHours)) continue;
 
-      for (const passengerClass of PASSENGER_CLASSES) {
+      for (const passengerType of PASSENGER_TYPES) {
         const affinity =
-          options.affinityOverride?.(origin, destination, passengerClass) ??
-          marketAffinity(origin, destination, passengerClass);
+          options.affinityOverride?.(origin, destination, passengerType) ??
+          marketAffinity(origin, destination, passengerType);
         const originDevelopment =
           (origin.economy + origin.business + origin.administration) / 300;
         const destinationDevelopment =
@@ -115,14 +117,14 @@ export function generateMarketDemands(
           1 /
           (1 +
             Math.pow(
-              referenceTimeHours / parameters.timeScaleHours[passengerClass],
-              parameters.distancePower[passengerClass],
+              referenceTimeHours / parameters.timeScaleHours[passengerType],
+              parameters.distancePower[passengerType],
             ));
-        const marketId = `${origin.id}->${destination.id}:${passengerClass}`;
+        const marketId = `${origin.id}->${destination.id}:${passengerType}`;
         const multiplier =
-          options.demandMultiplier?.(origin, destination, passengerClass) ?? 1;
+          options.demandMultiplier?.(origin, destination, passengerType) ?? 1;
         const potentialPassengers =
-          parameters.classScale[passengerClass] *
+          parameters.classScale[passengerType] *
           marketSize *
           affinity *
           distanceDecay *
@@ -132,10 +134,10 @@ export function generateMarketDemands(
         markets.push({
           originPortId: origin.id,
           destinationPortId: destination.id,
-          passengerClass,
+          passengerType,
           potentialPassengers: Math.max(0, potentialPassengers),
           referenceTimeHours,
-          acceptableFare: acceptableFare(referenceTimeHours, passengerClass, parameters),
+          acceptableFare: acceptableFare(referenceTimeHours, passengerType, parameters),
         });
       }
     }

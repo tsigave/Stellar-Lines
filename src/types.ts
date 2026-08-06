@@ -1,4 +1,6 @@
 export type PassengerClass = "economy" | "business" | "premium";
+/** 旅客出行目的/偏好；与购买的客舱产品 PassengerClass 严格分离。 */
+export type PassengerType = "business" | "leisure" | "budget" | "luxury";
 export type TravelMode = "sublight" | "warp" | "hyperspace";
 export type CabinConfiguration = Record<PassengerClass, number>;
 
@@ -6,6 +8,13 @@ export const PASSENGER_CLASSES: readonly PassengerClass[] = [
   "economy",
   "business",
   "premium",
+];
+
+export const PASSENGER_TYPES: readonly PassengerType[] = [
+  "business",
+  "leisure",
+  "budget",
+  "luxury",
 ];
 
 export interface Starport {
@@ -199,6 +208,15 @@ export interface RouteStop {
 export interface RoutePricing {
   multiplier: number;
   passengerClassMultiplier: Record<PassengerClass, number>;
+  /** 玩家设置的单程绝对票价；未提供时使用旧版倍率定价。 */
+  fareByClass?: Record<PassengerClass, number>;
+}
+
+export interface RouteEconomics {
+  fixedMaintenancePerDay: number;
+  ageSurchargePerDay: number;
+  depreciationPerDay: number;
+  expectedDelayCostPerDay: number;
 }
 
 export interface Route {
@@ -215,6 +233,7 @@ export interface Route {
   /** 玩家舰队按船龄修正后的平均舒适度。 */
   effectiveComfort?: number;
   pricing: RoutePricing;
+  economics?: RouteEconomics;
   maintenanceAllowanceHours: number;
   active: boolean;
 }
@@ -244,6 +263,8 @@ export interface ServiceLeg {
   reputation: number;
   onTimeRate: number;
   satisfactionByClass: Record<PassengerClass, number>;
+  satisfactionByPassengerType?: Record<PassengerType, number>;
+  baseCostBreakdown?: RouteCostBreakdown;
   dailyOperatingCost: number;
 }
 
@@ -251,7 +272,8 @@ export interface JourneyOption {
   id: string;
   originPortId: string;
   destinationPortId: string;
-  passengerClass: PassengerClass;
+  passengerType: PassengerType;
+  cabinClass: PassengerClass;
   serviceLegIds: readonly string[];
   companies: readonly string[];
   fare: number;
@@ -269,7 +291,7 @@ export interface JourneyOption {
 export interface MarketKey {
   originPortId: string;
   destinationPortId: string;
-  passengerClass: PassengerClass;
+  passengerType: PassengerType;
 }
 
 export interface MarketDemand extends MarketKey {
@@ -290,16 +312,17 @@ export interface ChoiceWeights {
 }
 
 export interface ChoiceParameters {
-  weights: Record<PassengerClass, ChoiceWeights>;
-  temperature: Record<PassengerClass, number>;
-  noTravelCost: Record<PassengerClass, number>;
+  weights: Record<PassengerType, ChoiceWeights>;
+  temperature: Record<PassengerType, number>;
+  noTravelCost: Record<PassengerType, number>;
+  cabinPreference: Record<PassengerType, Record<PassengerClass, number>>;
 }
 
 export interface DemandParameters {
-  classScale: Record<PassengerClass, number>;
-  timeScaleHours: Record<PassengerClass, number>;
-  distancePower: Record<PassengerClass, number>;
-  acceptableFareMultiplier: Record<PassengerClass, number>;
+  classScale: Record<PassengerType, number>;
+  timeScaleHours: Record<PassengerType, number>;
+  distancePower: Record<PassengerType, number>;
+  acceptableFareMultiplier: Record<PassengerType, number>;
   baseBoardingFare: number;
   farePerDistance: number;
   farePerReferenceHour: number;
@@ -324,9 +347,44 @@ export interface ServiceSettlement {
   capacity: number;
   passengers: number;
   loadFactor: number;
+  capacityByClass: CabinConfiguration;
+  passengersByClass: CabinConfiguration;
+  loadFactorByClass: CabinConfiguration;
+  revenueByClass: CabinConfiguration;
+  passengersByType: Record<PassengerType, number>;
   satisfaction: number;
   ticketRevenue: number;
   operatingCost: number;
+  costBreakdown: RouteCostBreakdown;
+  netProfit: number;
+}
+
+export interface RouteCostBreakdown {
+  fuel: number;
+  staff: number;
+  port: number;
+  flightMaintenance: number;
+  fixedMaintenance: number;
+  ageSurcharge: number;
+  depreciation: number;
+  delay: number;
+  other: number;
+  total: number;
+}
+
+export interface SatisfactionReason {
+  code: string;
+  text: string;
+  impact: number;
+  positive: boolean;
+}
+
+export interface PassengerEvaluation {
+  passengerType: PassengerType;
+  satisfaction: number;
+  passengers: number;
+  positiveReasons: readonly SatisfactionReason[];
+  negativeReasons: readonly SatisfactionReason[];
 }
 
 export interface CompanySettlement {
@@ -342,6 +400,9 @@ export interface MarketSettlement {
   actualPassengers: number;
   initialNoTravelPassengers: number;
   capacityLostPassengers: number;
+  priceLostPassengers: number;
+  passengersByClass: CabinConfiguration;
+  evaluation: PassengerEvaluation;
   journeys: readonly AllocatedJourney[];
 }
 
@@ -360,7 +421,7 @@ export interface MarketEvent {
   endsOnDay: number;
   recoveryDays: number;
   affectedPortIds: readonly string[];
-  demandModifiers: Partial<Record<PassengerClass, number>>;
+  demandModifiers: Partial<Record<PassengerType, number>>;
   fuelPriceModifier?: number;
   portCapacityModifier?: number;
   travelTimeModifier?: number;
