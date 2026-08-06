@@ -1,5 +1,6 @@
 export type PassengerClass = "economy" | "business" | "premium";
 export type TravelMode = "sublight" | "warp" | "hyperspace";
+export type CabinConfiguration = Record<PassengerClass, number>;
 
 export const PASSENGER_CLASSES: readonly PassengerClass[] = [
   "economy",
@@ -163,6 +164,11 @@ export interface WorldLeg {
 export interface ShipType {
   id: string;
   name: string;
+  manufacturer: string;
+  description: string;
+  /** 可用于客舱的空间单位；经济/商务/头等座分别占用 1/3/6 单位。 */
+  cabinSpace: number;
+  /** 标准宣传布局的总座位数，玩家自有船只仍从空舱开始配置。 */
   seats: number;
   purchasePrice: number;
   supportedModes: readonly TravelMode[];
@@ -198,6 +204,8 @@ export interface Route {
   stops: readonly RouteStop[];
   shipTypeId: string;
   assignedShips: number;
+  /** 玩家所分配舰船的平均每班客舱容量。 */
+  cabinCapacityByClass?: CabinConfiguration;
   pricing: RoutePricing;
   maintenanceAllowanceHours: number;
   active: boolean;
@@ -216,6 +224,8 @@ export interface ServiceLeg {
   departuresPerWeek: number;
   seatsPerDeparture: number;
   dailySeatCapacity: number;
+  seatsPerDepartureByClass?: CabinConfiguration;
+  dailySeatCapacityByClass?: CabinConfiguration;
   fareByClass: Record<PassengerClass, number>;
   comfort: number;
   reputation: number;

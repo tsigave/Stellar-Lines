@@ -928,7 +928,7 @@ export function ContinuousGalaxyMap({
                 <text
                   x={origin.x + 14 / camera.zoom}
                   y={origin.y - 12 / camera.zoom}
-                  style={{ fontSize: 11 / camera.zoom, strokeWidth: 2.4 / camera.zoom }}
+                  style={{ fontSize: 12 / camera.zoom, strokeWidth: 2.4 / camera.zoom }}
                 >{system.name}</text>
               </g>
             );
@@ -995,7 +995,7 @@ export function ContinuousGalaxyMap({
                   <text
                     x={position.x + radius + 3 / camera.zoom}
                     y={position.y - 2 / camera.zoom}
-                    style={{ fontSize: 10 / camera.zoom, strokeWidth: 2 / camera.zoom }}
+                    style={{ fontSize: 12 / camera.zoom, strokeWidth: 2 / camera.zoom }}
                   >{planet.name}</text>
                 </g>
               );
@@ -1046,7 +1046,7 @@ export function ContinuousGalaxyMap({
                       x={x + 1.5 / camera.zoom}
                       y={y - 0.7 / camera.zoom}
                       opacity={planetReveal}
-                      style={{ fontSize: 9 / camera.zoom, strokeWidth: 1.6 / camera.zoom }}
+                      style={{ fontSize: 12 / camera.zoom, strokeWidth: 1.6 / camera.zoom }}
                     >{moon.name}</text>
                   </g>
                 );
@@ -1080,7 +1080,7 @@ export function ContinuousGalaxyMap({
                 x={focusedPlanetPosition.x + focusedPlanetRadius + 2 / camera.zoom}
                 y={focusedPlanetPosition.y - 1 / camera.zoom}
                 opacity={systemOpacity * (1 - planetReveal)}
-                style={{ fontSize: 10 / camera.zoom, strokeWidth: 2 / camera.zoom }}
+                style={{ fontSize: 12 / camera.zoom, strokeWidth: 2 / camera.zoom }}
               >{focusedPlanet.name}</text>
             </g>
 

@@ -30,6 +30,8 @@ import {
   setAutoMaintenanceThreshold,
   advanceGameDay,
   closePlayerRoute,
+  configureShipCabins,
+  type GameState,
   type MarketDemand,
   type MarketEvent,
   type GalaxyGenerationConfig,
@@ -40,6 +42,23 @@ import {
   type Starport,
   type WorldLeg,
 } from "../src/index.js";
+
+function configureShipsForTest(
+  game: GameState,
+  shipIds: readonly string[],
+  shipTypes: readonly ShipType[],
+): GameState {
+  return shipIds.reduce((current, shipId) => {
+    const ship = current.fleet.find((candidate) => candidate.id === shipId)!;
+    const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId)!;
+    return configureShipCabins(
+      current,
+      shipId,
+      { economy: type.cabinSpace, business: 0, premium: 0 },
+      shipTypes,
+    ).state;
+  }, game);
+}
 
 test("中文行星系名称库包含 500 个不重复名称", () => {
   assert.equal(CHINESE_SYSTEM_NAMES.length, 500);
@@ -245,6 +264,9 @@ test("航线自动展开为往返服务并计算班次", () => {
   const ship: ShipType = {
     id: "liner",
     name: "Liner",
+    manufacturer: "Test Shipyard",
+    description: "Test fixture",
+    cabinSpace: 100,
     seats: 100,
     purchasePrice: 1_000_000,
     supportedModes: ["hyperspace"],
@@ -586,6 +608,97 @@ test("生成场景中的初始航线均有效并可完成日结算", () => {
   assert.ok(result.companies.every((company) => Number.isFinite(company.operatingProfit)));
 });
 
+test("舰船支持批量购买且以空舱交付，舱位严格遵守 6:3:1 空间占用", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const base = generated.galaxy.ports[0]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  const shuttle = generated.scenario.shipTypes.find((ship) => ship.id === "sparrow-shuttle")!;
+  const startingCash = game.cash;
+  game = buyShip(game, shuttle.id, generated.scenario.shipTypes, 3).state;
+  const purchased = game.fleet.filter((ship) => ship.shipTypeId === shuttle.id);
+
+  assert.equal(purchased.length, 3);
+  assert.equal(game.cash, startingCash - shuttle.purchasePrice * 3);
+  assert.ok(purchased.every((ship) => Object.values(ship.cabins).every((seats) => seats === 0)));
+  assert.throws(() => configureShipCabins(
+    game,
+    purchased[0]!.id,
+    { premium: 6, business: 0, economy: 0 },
+    generated.scenario.shipTypes,
+  ), /超过/);
+
+  game = configureShipCabins(
+    game,
+    purchased[0]!.id,
+    { premium: 2, business: 4, economy: 8 },
+    generated.scenario.shipTypes,
+  ).state;
+  assert.deepEqual(game.fleet.find((ship) => ship.id === purchased[0]!.id)!.cabins, {
+    premium: 2,
+    business: 4,
+    economy: 8,
+  });
+});
+
+test("玩家客舱配置按舱等形成独立运力", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const [base, destination] = generated.galaxy.ports;
+  assert.ok(base && destination);
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  game = configureShipCabins(
+    game,
+    game.fleet[0]!.id,
+    { premium: 10, business: 20, economy: 60 },
+    generated.scenario.shipTypes,
+  ).state;
+  game = createPlayerRoute(game, {
+    name: "Cabin Mix",
+    originPortId: base.id,
+    destinationPortId: destination.id,
+    shipIds: [game.fleet[0]!.id],
+    fareMultiplier: 1,
+    routingMode: "hyperspace",
+  }, generated.galaxy, generated.scenario.shipTypes).state;
+  const type = generated.scenario.shipTypes.find((ship) => ship.id === "meridian-liner")!;
+  const service = buildRouteServices(game.routes[0]!, type, generated.galaxy.ports, gameWorldLegs(generated.galaxy))[0]!;
+
+  assert.deepEqual(service.seatsPerDepartureByClass, { premium: 10, business: 20, economy: 60 });
+  assert.equal(service.seatsPerDeparture, 90);
+  assert.equal(service.dailySeatCapacityByClass!.business, service.dailySeatCapacityByClass!.premium * 2);
+  assert.equal(service.dailySeatCapacityByClass!.economy, service.dailySeatCapacityByClass!.premium * 6);
+});
+
+test("超空间船整体快于曲率船，亚光速指数会改变星港周转", () => {
+  const ships = PROOF_OF_CONCEPT_SCENARIO.shipTypes;
+  const warpSpeeds = ships.flatMap((ship) => ship.speedByMode.warp ?? []);
+  const hyperspaceSpeeds = ships.flatMap((ship) => ship.speedByMode.hyperspace ?? []);
+  assert.ok(Math.min(...hyperspaceSpeeds) > Math.max(...warpSpeeds));
+  assert.ok(ships.every((ship) => ship.manufacturer && ship.description && ship.cabinSpace > 0));
+
+  const ports: Starport[] = ["a", "b"].map((id) => ({
+    id, systemId: id, name: id, population: 50, economy: 50, business: 50,
+    tourism: 50, administration: 50, portLevel: 5, dailyCapacity: 1_000,
+    fuelPrice: 2, serviceFee: 100,
+  }));
+  const leg: WorldLeg = {
+    id: "a-b", fromPortId: "a", toPortId: "b", mode: "hyperspace", distance: 12,
+    hazard: 0, timeModifier: 1, fuelModifier: 1, isOpen: true,
+  };
+  const baseType = ships.find((ship) => ship.id === "meridian-liner")!;
+  const route: Route = {
+    id: "turnaround", companyId: "player", name: "Turnaround", kind: "return",
+    routingMode: "hyperspace",
+    stops: ["a", "b"].map((portId) => ({ portId, stopType: "commercial" as const, minimumStopHours: 4 })),
+    shipTypeId: baseType.id, assignedShips: 1,
+    pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1.35, premium: 2.1 } },
+    maintenanceAllowanceHours: 0, active: true,
+  };
+  const slow = buildRouteServices(route, { ...baseType, speedByMode: { ...baseType.speedByMode, sublight: 0.5 } }, ports, [leg]);
+  const fast = buildRouteServices(route, { ...baseType, speedByMode: { ...baseType.speedByMode, sublight: 2 } }, ports, [leg]);
+  assert.ok(fast[0]!.destinationDwellHours < slow[0]!.destinationDwellHours);
+  assert.ok(fast[0]!.departuresPerWeek > slow[0]!.departuresPerWeek);
+});
+
 test("可玩状态支持购船、开线、日结算和关闭航线的完整循环", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
   const base = generated.galaxy.ports[0]!;
@@ -602,6 +715,7 @@ test("可玩状态支持购船、开线、日结算和关闭航线的完整循�
 
   // Restore the affordable starter state and assign its free Meridian liner.
   game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  game = configureShipsForTest(game, [game.fleet[0]!.id], generated.scenario.shipTypes);
   const origin = generated.galaxy.ports[0]!;
   const destination = generated.galaxy.ports[1]!;
   const opened = createPlayerRoute(
@@ -643,6 +757,7 @@ test("玩家航线可沿连通网络跨越无人行星系", () => {
     laneDensity: 0,
   });
   let game = createNewGame(generated.galaxy.config, generated.galaxy, generated.galaxy.ports[0]!.id);
+  game = configureShipsForTest(game, [game.fleet[0]!.id], generated.scenario.shipTypes);
   const [origin, destination] = generated.galaxy.ports;
   assert.ok(origin && destination);
   game = createPlayerRoute(
@@ -698,6 +813,7 @@ test("发动机类型约束超空间与曲率航路", () => {
   const base = generated.galaxy.ports[0]!;
   const destination = generated.galaxy.ports[1]!;
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  game = configureShipsForTest(game, [game.fleet[0]!.id], generated.scenario.shipTypes);
   assert.throws(() => createPlayerRoute(
     game,
     {
@@ -714,6 +830,7 @@ test("发动机类型约束超空间与曲率航路", () => {
 
   game = buyShip(game, "arrow-express", generated.scenario.shipTypes).state;
   const arrow = game.fleet.find((ship) => ship.shipTypeId === "arrow-express")!;
+  game = configureShipsForTest(game, [arrow.id], generated.scenario.shipTypes);
   game = createPlayerRoute(
     game,
     {
@@ -730,7 +847,7 @@ test("发动机类型约束超空间与曲率航路", () => {
   const arrowType = generated.scenario.shipTypes.find((ship) => ship.id === "arrow-express")!;
   const services = buildRouteServices(game.routes[0]!, arrowType, generated.galaxy.ports, gameWorldLegs(generated.galaxy));
   assert.ok(services.every((service) => service.modePath.every((mode) => mode === "warp")));
-  assert.ok(services[0]!.destinationDwellHours >= 24);
+  assert.equal(services[0]!.destinationDwellHours, 4 + 12 / arrowType.speedByMode.sublight!);
   assert.ok(services[0]!.departuresPerWeek < 7);
 });
 
@@ -741,6 +858,7 @@ test("同速同推进方式的多艘船可共同增加航线班次", () => {
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
   game = buyShip(game, "meridian-liner", generated.scenario.shipTypes).state;
   const meridians = game.fleet.filter((ship) => ship.shipTypeId === "meridian-liner");
+  game = configureShipsForTest(game, meridians.map((ship) => ship.id), generated.scenario.shipTypes);
   game = createPlayerRoute(game, {
     name: "Two Ship Corridor",
     originPortId: base.id,
@@ -765,6 +883,7 @@ test("同一航线拒绝速度不同的船只组合", () => {
   game = buyShip(game, "pioneer-regional", generated.scenario.shipTypes).state;
   game = buyShip(game, "arrow-express", generated.scenario.shipTypes).state;
   const warpShips = game.fleet.filter((ship) => ship.shipTypeId === "pioneer-regional" || ship.shipTypeId === "arrow-express");
+  game = configureShipsForTest(game, warpShips.map((ship) => ship.id), generated.scenario.shipTypes);
   assert.throws(() => createPlayerRoute(game, {
     name: "Mixed Speed",
     originPortId: base.id,
@@ -814,6 +933,7 @@ test("船只累计损耗、强制停航并可完成定期维护", () => {
   const destination = generated.galaxy.ports[3]!;
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
   game = setAutoMaintenanceThreshold(game, 30).state;
+  game = configureShipsForTest(game, [game.fleet[0]!.id], generated.scenario.shipTypes);
   game = createPlayerRoute(
     game,
     {
@@ -852,6 +972,7 @@ test("定期维护周期按高利用率下约半年校准", () => {
     condition: 100,
     flightHoursSinceMaintenance: MAINTENANCE_DUE_HOURS - 1,
     maintenanceUntilDay: null,
+    cabins: { economy: 0, business: 0, premium: 0 },
   };
   assert.equal(shipMaintenanceState(ship, 180), "ready");
   assert.equal(shipMaintenanceState({ ...ship, flightHoursSinceMaintenance: MAINTENANCE_DUE_HOURS }, 180), "due");
@@ -864,6 +985,7 @@ test("船只到达玩家设定阈值后自动维修", () => {
   const destination = generated.galaxy.ports[1]!;
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
   game = setAutoMaintenanceThreshold(game, 95).state;
+  game = configureShipsForTest(game, [game.fleet[0]!.id], generated.scenario.shipTypes);
   game = createPlayerRoute(game, {
     name: "Automatic Maintenance", originPortId: base.id, destinationPortId: destination.id,
     shipIds: [game.fleet[0]!.id], fareMultiplier: 1, routingMode: "hyperspace",
@@ -901,6 +1023,7 @@ test("完成初级目标后仍可继续经营", () => {
   assert.ok(base);
   assert.ok(destination);
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
+  game = configureShipsForTest(game, [game.fleet[0]!.id], generated.scenario.shipTypes);
   game = createPlayerRoute(
     game,
     {

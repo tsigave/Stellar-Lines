@@ -17,7 +17,9 @@ export interface BuildRouteServicesOptions {
   shipCondition?: number;
 }
 
-export const MAX_INTERSTELLAR_SPEED_LY_PER_DAY = 5;
+export const MAX_INTERSTELLAR_SPEED_LY_PER_DAY = 10;
+/** 每次商业停靠的标准星系内接驳量；接驳小时数 = 12 / 亚光速指数。 */
+export const LOCAL_SUBLIGHT_TRANSFER_UNITS = 12;
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(100, value));
@@ -32,7 +34,7 @@ export function passengerSatisfactionByClass(
 ): Record<PassengerClass, number> {
   const speedLyPerDay = distance / Math.max(1 / 24, inVehicleHours / 24);
   const factors = {
-    speed: clampScore((speedLyPerDay / 5) * 100),
+    speed: clampScore((speedLyPerDay / MAX_INTERSTELLAR_SPEED_LY_PER_DAY) * 100),
     comfort: clampScore(comfort),
     reliability: clampScore(onTimeRate * 100),
     condition: clampScore(condition),
@@ -123,7 +125,10 @@ function findLegPath(
             : undefined;
       if (!neighbor || !unvisited.has(neighbor)) continue;
       const speed = modeValue(ship.speedByMode, leg.mode, "Speed");
-      const candidate = currentDistance + (leg.distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY)) * leg.timeModifier;
+      const candidate = currentDistance + Math.max(
+        1,
+        leg.distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY),
+      ) * leg.timeModifier;
       if (candidate < (distances.get(neighbor) ?? Number.POSITIVE_INFINITY)) {
         distances.set(neighbor, candidate);
         previous.set(neighbor, { nodeId: current, leg: orientLeg(leg, current) });
@@ -202,10 +207,16 @@ export function buildRouteServices(
     }
     const travelHours = legs.reduce((sum, leg) => {
       const speed = modeValue(ship.speedByMode, leg.mode, "Speed");
-      return sum + (leg.distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY)) * 24 * leg.timeModifier;
+      return sum + Math.max(
+        1,
+        leg.distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY),
+      ) * 24 * leg.timeModifier;
     }, 0);
-    // A commercial call includes local sublight approach, ground handling and departure.
-    const stopHours = Math.max(24, to.minimumStopHours, ship.turnaroundHours);
+    // A commercial call includes local sublight approach/departure plus ground handling.
+    // Faster sublight drives therefore shorten every stop and increase weekly frequency.
+    const sublightSpeed = ship.speedByMode.sublight ?? 1;
+    const localTransferHours = LOCAL_SUBLIGHT_TRANSFER_UNITS / sublightSpeed;
+    const stopHours = Math.max(to.minimumStopHours, ship.turnaroundHours) + localTransferHours;
     const fromPort = portsById.get(from.portId)!;
     const toPort = portsById.get(to.portId)!;
     const fuelCost = legs.reduce((sum, leg) => {
@@ -261,6 +272,19 @@ export function buildRouteServices(
     ) as Record<PassengerClass, number>;
 
     const onTimeRate = Math.min(0.999, options.onTimeRate ?? ship.reliability);
+    const seatsPerDepartureByClass = route.cabinCapacityByClass;
+    const seatsPerDeparture = seatsPerDepartureByClass
+      ? PASSENGER_CLASSES.reduce(
+          (sum, passengerClass) => sum + seatsPerDepartureByClass[passengerClass],
+          0,
+        )
+      : ship.seats;
+    const dailySeatCapacityByClass = seatsPerDepartureByClass
+      ? Object.fromEntries(PASSENGER_CLASSES.map((passengerClass) => [
+          passengerClass,
+          (departuresPerWeek * seatsPerDepartureByClass[passengerClass]) / 7,
+        ])) as Record<PassengerClass, number>
+      : undefined;
     services.push({
       id: `${route.id}:${groupStart}-${index}`,
       routeId: route.id,
@@ -272,8 +296,11 @@ export function buildRouteServices(
       inVehicleHours,
       destinationDwellHours: last.stopHours,
       departuresPerWeek,
-      seatsPerDeparture: ship.seats,
-      dailySeatCapacity: (departuresPerWeek * ship.seats) / 7,
+      seatsPerDeparture,
+      dailySeatCapacity: (departuresPerWeek * seatsPerDeparture) / 7,
+      ...(seatsPerDepartureByClass && dailySeatCapacityByClass
+        ? { seatsPerDepartureByClass, dailySeatCapacityByClass }
+        : {}),
       fareByClass,
       comfort: ship.comfort,
       reputation: options.companyReputation ?? 60,

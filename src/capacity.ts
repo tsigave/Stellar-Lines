@@ -6,6 +6,7 @@ import type {
   ChoiceRequest,
   JourneyOption,
   MarketDemand,
+  PassengerClass,
   ServiceLeg,
 } from "./types.js";
 
@@ -23,6 +24,15 @@ function allocationKey(market: MarketDemand, option: JourneyOption): string {
   return `${marketKey(market)}|${option.id}`;
 }
 
+function serviceCapacityKey(
+  serviceLegId: string,
+  passengerClass: PassengerClass,
+  availableCapacity: ReadonlyMap<string, number>,
+): string {
+  const classKey = `${serviceLegId}:${passengerClass}`;
+  return availableCapacity.has(classKey) ? classKey : `${serviceLegId}:*`;
+}
+
 function applyCapacityPass(
   requests: readonly ChoiceRequest[],
   availableCapacity: ReadonlyMap<string, number>,
@@ -31,7 +41,12 @@ function applyCapacityPass(
   for (const request of requests) {
     for (const option of request.options) {
       const requested = request.requestedByOption.get(option.id) ?? 0;
-      for (const legId of option.serviceLegIds) {
+      for (const serviceLegId of option.serviceLegIds) {
+        const legId = serviceCapacityKey(
+          serviceLegId,
+          request.market.passengerClass,
+          availableCapacity,
+        );
         totalRequestedByLeg.set(legId, (totalRequestedByLeg.get(legId) ?? 0) + requested);
       }
     }
@@ -42,7 +57,12 @@ function applyCapacityPass(
     for (const option of request.options) {
       const requested = request.requestedByOption.get(option.id) ?? 0;
       let scale = 1;
-      for (const legId of option.serviceLegIds) {
+      for (const serviceLegId of option.serviceLegIds) {
+        const legId = serviceCapacityKey(
+          serviceLegId,
+          request.market.passengerClass,
+          availableCapacity,
+        );
         const totalRequested = totalRequestedByLeg.get(legId) ?? 0;
         const capacity = availableCapacity.get(legId) ?? 0;
         if (totalRequested > 0) scale = Math.min(scale, capacity / totalRequested);
@@ -59,12 +79,18 @@ function applyCapacityPass(
 function usedCapacity(
   requests: readonly ChoiceRequest[],
   actual: ReadonlyMap<string, number>,
+  availableCapacity: ReadonlyMap<string, number>,
 ): Map<string, number> {
   const used = new Map<string, number>();
   for (const request of requests) {
     for (const option of request.options) {
       const passengers = actual.get(allocationKey(request.market, option)) ?? 0;
-      for (const legId of option.serviceLegIds) {
+      for (const serviceLegId of option.serviceLegIds) {
+        const legId = serviceCapacityKey(
+          serviceLegId,
+          request.market.passengerClass,
+          availableCapacity,
+        );
         used.set(legId, (used.get(legId) ?? 0) + passengers);
       }
     }
@@ -78,12 +104,24 @@ export function allocateCapacity(
   services: readonly ServiceLeg[],
   choiceParameters: ChoiceParameters = DEFAULT_CHOICE_PARAMETERS,
 ): CapacityAllocation {
-  const capacity = new Map(services.map((service) => [service.id, service.dailySeatCapacity]));
+  const capacity = new Map<string, number>();
+  for (const service of services) {
+    if (service.dailySeatCapacityByClass) {
+      for (const passengerClass of ["economy", "business", "premium"] as const) {
+        capacity.set(
+          `${service.id}:${passengerClass}`,
+          service.dailySeatCapacityByClass[passengerClass],
+        );
+      }
+    } else {
+      capacity.set(`${service.id}:*`, service.dailySeatCapacity);
+    }
+  }
   const firstRequests = markets.map((market) =>
     chooseJourneys(market, optionsByMarket.get(marketKey(market)) ?? [], choiceParameters),
   );
   const firstActual = applyCapacityPass(firstRequests, capacity);
-  const firstUsed = usedCapacity(firstRequests, firstActual);
+  const firstUsed = usedCapacity(firstRequests, firstActual, capacity);
   const residualCapacity = new Map<string, number>();
   for (const [legId, legCapacity] of capacity) {
     residualCapacity.set(legId, Math.max(0, legCapacity - (firstUsed.get(legId) ?? 0)));
@@ -102,7 +140,14 @@ export function allocateCapacity(
     if (overflow <= 0) continue;
 
     const availableOptions = request.options.filter((option) =>
-      option.serviceLegIds.every((legId) => (residualCapacity.get(legId) ?? 0) > 1e-9),
+      option.serviceLegIds.every((serviceLegId) => {
+        const legId = serviceCapacityKey(
+          serviceLegId,
+          request.market.passengerClass,
+          residualCapacity,
+        );
+        return (residualCapacity.get(legId) ?? 0) > 1e-9;
+      }),
     );
     secondRequests.push(
       chooseJourneys(request.market, availableOptions, choiceParameters, overflow),

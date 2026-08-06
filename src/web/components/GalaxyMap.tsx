@@ -178,7 +178,9 @@ function buildShipVisuals(
       distances = lanes.map((lane) => lane.distance);
     }
     const speed = shipType.speedByMode[route.routingMode ?? "hyperspace"] ?? 1;
-    const durations = distances.map((distance) => (distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY)) * 24);
+    const durations = distances.map((distance) =>
+      Math.max(1, distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY)) * 24,
+    );
     const travelHours = durations.reduce((sum, duration) => sum + duration, 0);
     if (travelHours <= 0 || pathSystems.length < 2) return atBase("grounded", "没有可用航路", route.name);
     const cycleHours = travelHours * 2 + 48;

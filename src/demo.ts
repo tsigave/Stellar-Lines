@@ -92,6 +92,9 @@ const worldLegs: WorldLeg[] = baseLegs.flatMap(
 const liner: ShipType = {
   id: "corridor-liner",
   name: "走廊级客轮",
+  manufacturer: "示例船厂",
+  description: "用于命令行演示的标准客轮。",
+  cabinSpace: 220,
   seats: 220,
   purchasePrice: 2_500_000,
   supportedModes: ["sublight", "hyperspace"],

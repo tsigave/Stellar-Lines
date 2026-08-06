@@ -4,6 +4,7 @@ import {
   adjustPlayerRouteFare,
   buyShip,
   closePlayerRoute,
+  configureShipCabins,
   createGeneratedGameEvents,
   createGeneratedScenario,
   createNewGame,
@@ -16,12 +17,14 @@ import {
   simulateCampaign,
   togglePlayerRoute,
   type CreateRouteInput,
+  type CabinConfiguration,
   type GalaxyGenerationConfig,
   type GameState,
 } from "../index.js";
 import { CompanyPanel } from "./components/CompanyPanel.js";
 import { DemandPanel } from "./components/DemandPanel.js";
 import { FuelMarketPanel } from "./components/FuelMarketPanel.js";
+import { FleetPanel } from "./components/FleetPanel.js";
 import { GalaxyMap } from "./components/GalaxyMap.js";
 import { GenerationPanel } from "./components/GenerationPanel.js";
 import { OperationsPanel } from "./components/OperationsPanel.js";
@@ -79,6 +82,7 @@ export function App() {
   );
   const [error, setError] = useState<string | null>(null);
   const [showNewGame, setShowNewGame] = useState(!session.restored);
+  const [activeView, setActiveView] = useState<"map" | "fleet">("map");
   const { generated, game } = session;
 
   const newGamePreview = useMemo(() => {
@@ -148,10 +152,11 @@ export function App() {
       };
       setSession(next);
       setSelectedPortId(next.game.basePortId);
+      setActiveView("fleet");
       setSpeed(0);
       setShowNewGame(false);
       setError(null);
-      setNotice("公司基地已设立。远星一号正在基地待命，所有航线必须从这里出发。");
+      setNotice("公司基地已设立。远星一号为空舱交付，请先在舰队管理中配置舱位。");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "无法生成星域");
     }
@@ -178,51 +183,70 @@ export function App() {
 
       <TopMetrics game={game} />
 
-      <main className="workspace">
-        <OperationsPanel
+      <nav className="primary-view-tabs" aria-label="主要功能">
+        <button className={activeView === "map" ? "active" : ""} onClick={() => setActiveView("map")}>
+          <span>星图运营</span><small>星港 · 航线 · 市场</small>
+        </button>
+        <button className={activeView === "fleet" ? "active" : ""} onClick={() => setActiveView("fleet")}>
+          <span>舰队管理</span><small>购买 · 舱位 · 维护</small>
+        </button>
+      </nav>
+
+      {activeView === "fleet" ? (
+        <FleetPanel
           game={game}
-          galaxy={generated.galaxy}
           shipTypes={generated.scenario.shipTypes}
-          selectedPortId={selectedPortId}
-          onCreateRoute={createRoute}
-          onBuyShip={(shipTypeId) => commit(() => buyShip(game, shipTypeId, generated.scenario.shipTypes))}
+          onBuyShips={(shipTypeId, quantity) => commit(() => buyShip(game, shipTypeId, generated.scenario.shipTypes, quantity))}
+          onConfigureCabins={(shipId, cabins: CabinConfiguration) => commit(() => configureShipCabins(game, shipId, cabins, generated.scenario.shipTypes))}
           onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
           onAutoMaintenanceThresholdChange={(threshold) => commit(() => setAutoMaintenanceThreshold(game, threshold))}
         />
-        <div className="map-game-stack">
-          <GalaxyMap
-            key={generated.galaxy.config.seed}
-            galaxy={generated.galaxy}
-            game={game}
-            shipTypes={generated.scenario.shipTypes}
-            motionDurationMs={speed === 1 ? 1_000 : speed === 4 ? 260 : speed === 16 ? 85 : 650}
-            basePortId={game.basePortId}
-            selectedPortId={selectedPortId}
-            onSelectPort={setSelectedPortId}
-          />
-          {(notice || error) && <div className={error ? "game-toast error" : "game-toast"}>{error ?? notice}</div>}
-          {game.status === "lost" && (
-            <div className="game-outcome lost">
-              <span>本局经营结束</span>
-              <strong>资金耗尽，或未能在期限内完成初级目标</strong>
-              <button onClick={openNewGame}>开始新游戏</button>
-            </div>
-          )}
-        </div>
-        <aside className="inspector-panel glass-panel">
-          <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} />
-          <FuelMarketPanel game={game} galaxy={generated.galaxy} selectedPortId={selectedPortId} />
-          <CompanyPanel
-            game={game}
-            galaxy={generated.galaxy}
-            shipTypes={generated.scenario.shipTypes}
-            events={events}
-            onToggleRoute={(routeId) => commit(() => togglePlayerRoute(game, routeId))}
-            onAdjustFare={(routeId, delta) => commit(() => adjustPlayerRouteFare(game, routeId, delta))}
-            onCloseRoute={(routeId) => commit(() => closePlayerRoute(game, routeId))}
-          />
-        </aside>
-      </main>
+      ) : (
+        <main className="workspace">
+          <div className="map-game-stack">
+            <GalaxyMap
+              key={generated.galaxy.config.seed}
+              galaxy={generated.galaxy}
+              game={game}
+              shipTypes={generated.scenario.shipTypes}
+              motionDurationMs={speed === 1 ? 1_000 : speed === 4 ? 260 : speed === 16 ? 85 : 650}
+              basePortId={game.basePortId}
+              selectedPortId={selectedPortId}
+              onSelectPort={setSelectedPortId}
+            />
+            {game.status === "lost" && (
+              <div className="game-outcome lost">
+                <span>本局经营结束</span>
+                <strong>资金耗尽，或未能在期限内完成初级目标</strong>
+                <button onClick={openNewGame}>开始新游戏</button>
+              </div>
+            )}
+          </div>
+          <aside className="inspector-panel glass-panel">
+            <OperationsPanel
+              game={game}
+              galaxy={generated.galaxy}
+              shipTypes={generated.scenario.shipTypes}
+              selectedPortId={selectedPortId}
+              onCreateRoute={createRoute}
+              onOpenFleet={() => setActiveView("fleet")}
+            />
+            <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} />
+            <FuelMarketPanel game={game} galaxy={generated.galaxy} selectedPortId={selectedPortId} />
+            <CompanyPanel
+              game={game}
+              galaxy={generated.galaxy}
+              shipTypes={generated.scenario.shipTypes}
+              events={events}
+              onToggleRoute={(routeId) => commit(() => togglePlayerRoute(game, routeId))}
+              onAdjustFare={(routeId, delta) => commit(() => adjustPlayerRouteFare(game, routeId, delta))}
+              onCloseRoute={(routeId) => commit(() => closePlayerRoute(game, routeId))}
+            />
+          </aside>
+        </main>
+      )}
+
+      {(notice || error) && <div className={error ? "game-toast global-toast error" : "game-toast global-toast"}>{error ?? notice}</div>}
 
       <TimeControls day={game.day} speed={speed} disabled={game.status !== "playing"} onSpeedChange={setSpeed} onAdvance={advanceOneDay} />
 
