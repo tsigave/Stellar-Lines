@@ -195,6 +195,7 @@ export function App() {
             galaxy={generated.galaxy}
             game={game}
             shipTypes={generated.scenario.shipTypes}
+            motionDurationMs={speed === 1 ? 1_000 : speed === 4 ? 260 : speed === 16 ? 85 : 650}
             basePortId={game.basePortId}
             selectedPortId={selectedPortId}
             onSelectPort={setSelectedPortId}

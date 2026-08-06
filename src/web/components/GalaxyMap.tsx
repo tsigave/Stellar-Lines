@@ -15,6 +15,7 @@ interface GalaxyMapProps {
   galaxy: GeneratedGalaxy;
   game: GameState;
   shipTypes: readonly ShipType[];
+  motionDurationMs: number;
   basePortId?: string;
   selectedPortId: string;
   onSelectPort: (portId: string) => void;
@@ -215,6 +216,7 @@ export function GalaxyMap({
   galaxy,
   game,
   shipTypes,
+  motionDurationMs,
   basePortId,
   selectedPortId,
   onSelectPort,
@@ -455,7 +457,11 @@ export function GalaxyMap({
           })}
           <g className="live-ship-markers" pointerEvents="none">
             {shipVisuals.map((ship) => (
-              <g key={ship.id} className={`live-ship-marker ${ship.state}`} transform={`translate(${ship.x} ${ship.y})`}>
+              <g
+                key={ship.id}
+                className={`live-ship-marker ${ship.state}`}
+                style={{ transform: `translate(${ship.x}px, ${ship.y}px)`, transitionDuration: `${motionDurationMs}ms` }}
+              >
                 <circle r="8" />
                 <path d="M 0 -6 L 5 5 L 0 2 L -5 5 Z" />
                 <text x="11" y="3">{ship.name}</text>

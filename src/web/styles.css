@@ -422,6 +422,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .legend-dot.uninhabited { border: 1px dashed #7e8b91; background: transparent; }
 .legend-dot.base { border: 1px solid #ffcb71; background: rgba(255, 203, 113, 0.24); box-shadow: 0 0 5px rgba(255, 203, 113, 0.65); }
 
+.live-ship-marker { transition-property: transform; transition-timing-function: linear; will-change: transform; }
 .live-ship-marker circle { fill: rgba(6, 16, 24, 0.86); stroke: #8df8e8; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
 .live-ship-marker path { fill: #d9fff8; stroke: #278e88; stroke-width: 0.8; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px rgba(80, 223, 206, 0.8)); }
 .live-ship-marker text { fill: #e7faf7; font-size: 8px; paint-order: stroke; stroke: #031018; stroke-width: 2px; }
