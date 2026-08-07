@@ -19,8 +19,8 @@ function compactHistoricalRoute(route: GameRouteDaySummary, keepEvaluations: boo
 
 /**
  * localStorage is intentionally treated as a compact resume snapshot, not the
- * authoritative analytics database. The UI exposes at most 90 days, so older
- * records and repeated historical explanation strings do not belong in it.
+ * authoritative analytics database. Route-level history stays aggressively
+ * compact, while lightweight fuel quotes are retained for the 360-day chart.
  */
 export function compactGameForStorage(game: GameState, historyDays: number): GameState {
   const history = historyDays > 0 ? game.history.slice(-historyDays) : [];
@@ -32,7 +32,7 @@ export function compactGameForStorage(game: GameState, historyDays: number): Gam
         compactHistoricalRoute(route, index === history.length - 1),
       ),
     })),
-    fuelMarket: game.fuelMarket.slice(-Math.max(1, Math.min(90, historyDays || 1))),
+    fuelMarket: game.fuelMarket.slice(-360),
   };
 }
 

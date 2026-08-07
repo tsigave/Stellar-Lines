@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   advanceGameDay,
+  buyFuelForWarehouse,
+  cancelFuelContract,
   closePlayerRoute,
   assignShipsToFleetConfiguration,
   createFleetConfiguration,
@@ -16,7 +18,11 @@ import {
   placeShipPurchaseAgreement,
   setAutoMaintenanceThreshold,
   setAutoReplacementAge,
-  setFuelStoragePolicy,
+  sellFuelFromWarehouse,
+  setFuelAutoContractPolicy,
+  setFuelWarehousePolicy,
+  setFuelWarehouseRental,
+  signFuelContract,
   setPlayerRouteFares,
   updateFleetConfiguration,
   simulateCampaign,
@@ -27,7 +33,7 @@ import {
 } from "../index.js";
 import { CompanyPanel } from "./components/CompanyPanel.js";
 import { DemandPanel } from "./components/DemandPanel.js";
-import { FuelMarketPanel } from "./components/FuelMarketPanel.js";
+import { FuelPanel } from "./components/FuelPanel.js";
 import { FleetPanel } from "./components/FleetPanel.js";
 import { GalaxyMap } from "./components/GalaxyMap.js";
 import { GenerationPanel } from "./components/GenerationPanel.js";
@@ -86,7 +92,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [showNewGame, setShowNewGame] = useState(!session.restored);
-  const [activeView, setActiveView] = useState<"map" | "fleet" | "route">("map");
+  const [activeView, setActiveView] = useState<"map" | "fleet" | "fuel" | "route">("map");
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(session.game.routes[0]?.id ?? null);
   const { generated, game } = session;
 
@@ -113,15 +119,6 @@ export function App() {
     return simulateCampaign(scenario, {
       startDay: game.day,
       numberOfDays: 1,
-      ...(game.fuelStorage.inventoryUsePriceThreshold !== null ? {
-        fuelInventorySupplies: [{
-          companyId: "player",
-          portId: game.fuelStorage.portId,
-          availableUnits: game.fuelStorage.quantity,
-          averageUnitCost: game.fuelStorage.averageUnitCost,
-          useAtOrAbove: game.fuelStorage.inventoryUsePriceThreshold,
-        }],
-      } : {}),
     }).days[0]!.settlement;
   }, [game, generated]);
 
@@ -200,7 +197,7 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.5.1</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.5.2</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
         <div className={saveWarning ? "header-indicator warning" : "header-indicator"}><i />{saveWarning ? "存档受限" : "自动存档"}</div>
@@ -214,6 +211,9 @@ export function App() {
         </button>
         <button className={activeView === "fleet" ? "active" : ""} onClick={() => setActiveView("fleet")}>
           <span>舰队管理</span><small>购买 · 舱位 · 维护</small>
+        </button>
+        <button className={activeView === "fuel" ? "active" : ""} onClick={() => setActiveView("fuel")}>
+          <span>燃料管理</span><small>市场 · 合约 · 仓库</small>
         </button>
         {selectedRouteId && <button className={activeView === "route" ? "active" : ""} onClick={() => setActiveView("route")}>
           <span>航线经营</span><small>旅客 · 价格 · 成本</small>
@@ -240,6 +240,17 @@ export function App() {
           onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
           onAutoMaintenanceThresholdChange={(threshold) => commit(() => setAutoMaintenanceThreshold(game, threshold))}
           onAutoReplacementAgeChange={(ageYears) => commit(() => setAutoReplacementAge(game, ageYears))}
+        />
+      ) : activeView === "fuel" ? (
+        <FuelPanel
+          game={game}
+          onSignContract={(weeks, units) => commit(() => signFuelContract(game, weeks, units))}
+          onCancelContract={(contractId) => commit(() => cancelFuelContract(game, contractId))}
+          onAutoPolicyChange={(policy) => commit(() => setFuelAutoContractPolicy(game, policy))}
+          onWarehouseRentalChange={(rented) => commit(() => setFuelWarehouseRental(game, rented))}
+          onWarehousePolicyChange={(limit, policy) => commit(() => setFuelWarehousePolicy(game, limit, policy))}
+          onBuyWarehouseFuel={(units) => commit(() => buyFuelForWarehouse(game, units))}
+          onSellWarehouseFuel={(units) => commit(() => sellFuelFromWarehouse(game, units))}
         />
       ) : (
         <main className="workspace">
@@ -272,12 +283,6 @@ export function App() {
               onOpenFleet={() => setActiveView("fleet")}
             />
             <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} />
-            <FuelMarketPanel
-              game={game}
-              galaxy={generated.galaxy}
-              selectedPortId={selectedPortId}
-              onPolicyChange={(buyAt, useAt) => commit(() => setFuelStoragePolicy(game, buyAt, useAt))}
-            />
             <CompanyPanel
               game={game}
               galaxy={generated.galaxy}

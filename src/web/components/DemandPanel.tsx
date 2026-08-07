@@ -53,7 +53,7 @@ export function DemandPanel({ galaxy, settlement, selectedPortId }: DemandPanelP
       </div>
       <div className="port-attributes">
         <span>服务人口 <strong>{formatPopulation(port.populationMillions ?? port.population)}</strong></span>
-        <span>燃料 <strong>{port.fuelPrice.toFixed(2)} Cr</strong></span>
+        <span>星港服务费 <strong>{formatNumber(port.serviceFee)} Cr</strong></span>
         <span>容量 <strong>{formatNumber(port.dailyCapacity)}</strong></span>
       </div>
       <div className="class-demand">

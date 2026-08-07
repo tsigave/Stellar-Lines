@@ -153,6 +153,7 @@ button { color: inherit; }
 .top-metric.warning strong { color: #e8c58a; }
 .top-metric.positive strong { color: #69ddc3; }
 .top-metric.negative strong { color: #ff8984; }
+.top-metric.fuel strong { color: #f2bd69; }
 .top-company-state { min-width: 88px; display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; }
 .top-company-state i { width: 7px; height: 7px; border-radius: 50%; }
 .top-company-state.positive { color: #7fd8c5; }
@@ -584,6 +585,94 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fuel-price-grid button.selected { border-color: rgba(242, 189, 105, 0.4); background: rgba(112, 79, 34, 0.13); }
 .fuel-price-grid span { min-width: 0; overflow: hidden; color: #708995; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .fuel-price-grid strong { color: #b9ccd1; font-size: 12px; font-weight: 600; }
+
+.fuel-workspace { min-height: 0; overflow: auto; padding: 12px; display: grid; align-content: start; gap: 12px; }
+.fuel-hero { padding: 20px 22px; display: grid; grid-template-columns: minmax(340px, 1.6fr) repeat(4, minmax(160px, 0.7fr)); align-items: center; gap: 18px; }
+.fuel-hero > div:first-child p { margin: 8px 0 0; color: #8399a2; font-size: 14px; line-height: 1.5; }
+.fuel-hero-price, .fuel-kpi { min-height: 78px; padding: 12px 14px; display: flex; flex-direction: column; justify-content: center; gap: 5px; border: 1px solid var(--border); background: rgba(7, 18, 27, 0.58); }
+.fuel-hero-price { border-color: rgba(242, 189, 105, 0.28); background: rgba(90, 58, 18, 0.13); }
+.fuel-hero-price span, .fuel-kpi span { color: #718992; font-size: 12px; }
+.fuel-hero-price strong { color: var(--amber); font-size: 24px; }
+.fuel-kpi strong { color: #d9eaea; font-size: 20px; }
+.fuel-hero-price small, .fuel-kpi small { color: #71858d; font-size: 12px; line-height: 1.35; }
+.fuel-dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.fuel-section-card { min-width: 0; padding: 20px 22px; }
+.fuel-section-card .fleet-section-heading { margin-bottom: 14px; }
+.fuel-price-history-controls { display: flex; align-items: flex-end; gap: 12px; }
+.fuel-price-history-controls label { display: flex; align-items: center; gap: 7px; color: #8298a1; font-size: 12px; white-space: nowrap; }
+.fuel-price-history-controls select { width: 82px; min-height: 32px; }
+.fuel-price-history-controls p { margin: 0 0 7px; color: #8298a1; font-size: 13px; line-height: 1.35; text-align: right; white-space: nowrap; }
+.fuel-price-chart { width: 100%; min-width: 0; display: grid; grid-template-columns: 24px 48px minmax(0, 1fr); grid-template-rows: 140px 28px 18px; column-gap: 7px; }
+.fuel-price-y-title { grid-column: 1; grid-row: 1; align-self: center; justify-self: center; color: #718992; font-size: 11px; font-weight: 500; letter-spacing: 0.4px; white-space: nowrap; writing-mode: vertical-rl; transform: rotate(180deg); }
+.fuel-price-y-axis { position: relative; grid-column: 2; grid-row: 1; color: #718992; font-size: 11px; font-variant-numeric: tabular-nums; }
+.fuel-price-y-axis span { position: absolute; right: 0; transform: translateY(-50%); }
+.fuel-price-plot { position: relative; min-width: 0; width: 100%; height: 140px; grid-column: 3; grid-row: 1; overflow: visible; border-left: 1px solid rgba(112, 150, 161, 0.2); border-bottom: 1px solid rgba(112, 150, 161, 0.2); cursor: crosshair; }
+.fuel-wide-chart { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+.fuel-wide-chart line { stroke: rgba(112, 150, 161, 0.14); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.fuel-wide-chart polyline { fill: none; stroke: var(--amber); stroke-width: 2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px rgba(242, 189, 105, 0.4)); }
+.fuel-price-hover-line { position: absolute; inset: 0 auto 0 0; width: 1px; display: block; border-left: 1px dashed rgba(226, 239, 239, 0.5); pointer-events: none; }
+.fuel-price-hover-dot { position: absolute; width: 9px; height: 9px; display: block; border: 2px solid #fff0cd; border-radius: 50%; background: var(--amber); box-shadow: 0 0 8px rgba(242, 189, 105, 0.65); transform: translate(-50%, -50%); pointer-events: none; }
+.fuel-price-tooltip { position: absolute; z-index: 2; min-width: 145px; padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; border: 1px solid rgba(242, 189, 105, 0.38); color: #859aa2; background: rgba(5, 15, 22, 0.96); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); font-size: 11px; transform: translate(-50%, calc(-100% - 10px)); pointer-events: none; }
+.fuel-price-tooltip strong { color: #ffe6bb; font-size: 13px; font-weight: 600; }
+.fuel-price-tooltip.left { transform: translate(0, calc(-100% - 10px)); }
+.fuel-price-tooltip.right { transform: translate(-100%, calc(-100% - 10px)); }
+.fuel-price-tooltip.below { transform: translate(-50%, 10px); }
+.fuel-price-tooltip.left.below { transform: translate(0, 10px); }
+.fuel-price-tooltip.right.below { transform: translate(-100%, 10px); }
+.fuel-price-x-axis { position: relative; min-width: 0; grid-column: 3; grid-row: 2; color: #718992; font-size: 10px; font-variant-numeric: tabular-nums; }
+.fuel-price-x-axis span { position: absolute; top: 7px; white-space: nowrap; transform: translateX(-50%); }
+.fuel-price-x-axis span.start { transform: none; }
+.fuel-price-x-axis span.end { transform: translateX(-100%); }
+.fuel-price-x-axis span.single { transform: translateX(-50%); }
+.fuel-price-x-title { grid-column: 3; grid-row: 3; justify-self: center; color: #718992; font-size: 11px; font-weight: 500; letter-spacing: 0.4px; }
+.fuel-consumption-chart { height: 142px; display: flex; align-items: flex-end; gap: 3px; border-bottom: 1px solid rgba(112, 150, 161, 0.16); }
+.fuel-day-column { min-width: 0; height: 126px; flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 5px; }
+.fuel-day-column > div { min-height: 2px; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; background: rgba(112, 150, 161, 0.08); }
+.fuel-day-column i { width: 100%; display: block; }
+.fuel-day-column span { height: 10px; overflow: hidden; color: #526a74; font-size: 8px; text-align: center; }
+.fuel-day-column i.contract, .fuel-chart-legend i.contract { background: #56cfc4; }
+.fuel-day-column i.warehouse, .fuel-chart-legend i.warehouse { background: #bc80db; }
+.fuel-day-column i.spot, .fuel-chart-legend i.spot { background: #e6bb64; }
+.fuel-chart-legend { margin-top: 10px; display: flex; justify-content: flex-end; gap: 15px; }
+.fuel-chart-legend span { display: flex; align-items: center; gap: 6px; color: #718992; font-size: 12px; }
+.fuel-chart-legend i { width: 8px; height: 8px; display: block; border-radius: 50%; }
+.fuel-contract-builder { display: grid; grid-template-columns: 150px 170px repeat(4, minmax(125px, 1fr)) 170px; align-items: end; gap: 8px; }
+.fuel-contract-builder label, .fuel-policy-form label, .fuel-warehouse-trade label { display: flex; flex-direction: column; gap: 6px; color: #82979f; font-size: 12px; }
+.fuel-contract-builder > div { min-height: 55px; padding: 9px 10px; display: flex; flex-direction: column; justify-content: center; gap: 5px; border: 1px solid var(--border); background: rgba(7, 18, 27, 0.55); }
+.fuel-contract-builder > div span { color: #718790; font-size: 12px; }
+.fuel-contract-builder > div strong { color: #d6e6e8; font-size: 14px; }
+.fuel-contract-builder > button, .fuel-policy-form button, .fuel-rental-callout button, .fuel-warehouse-trade button { min-height: 36px; border: 1px solid rgba(80, 223, 206, 0.38); color: #d3fff7; background: rgba(34, 119, 112, 0.23); cursor: pointer; }
+.fuel-contract-builder > button:disabled { opacity: 0.4; cursor: not-allowed; }
+.fuel-rule-note { margin-top: 10px; display: block; color: #71878f; font-size: 12px; line-height: 1.5; }
+.fuel-contract-list { margin-top: 16px; display: grid; gap: 7px; }
+.fuel-contract-list article { min-height: 58px; padding: 9px 11px; display: grid; grid-template-columns: minmax(180px, 1.2fr) repeat(4, minmax(110px, 0.7fr)) 92px; align-items: center; gap: 10px; border: 1px solid rgba(111, 160, 170, 0.18); background: rgba(7, 18, 27, 0.66); }
+.fuel-contract-list article > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.fuel-contract-list article span { overflow: hidden; color: #728892; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.fuel-contract-list article strong { color: #d1e1e3; font-size: 13px; }
+.fuel-contract-list article button { min-height: 32px; border: 1px solid rgba(255, 124, 121, 0.28); color: #ffaaa5; background: rgba(112, 38, 38, 0.15); cursor: pointer; }
+.fuel-contract-history { margin-top: 12px; color: #8297a0; font-size: 12px; }
+.fuel-contract-history summary { cursor: pointer; }
+.fuel-contract-history p { margin: 6px 0 0; padding: 7px 9px; display: flex; justify-content: space-between; border: 1px solid var(--border); }
+.fuel-contract-history p strong { color: #aebfc3; }
+.fuel-dashboard-grid.strategy { align-items: start; }
+.fuel-policy-form { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)) 155px; align-items: end; gap: 8px; }
+.fuel-policy-form .toggle-line { min-height: 35px; padding: 0 10px; flex-direction: row; align-items: center; gap: 8px; border: 1px solid var(--border); }
+.fuel-policy-form .toggle-line input { width: auto; }
+.fuel-explanation { margin: 12px 0 0; padding: 10px; border-left: 2px solid rgba(80, 223, 206, 0.42); color: #7e949c; background: rgba(17, 49, 53, 0.2); font-size: 12px; line-height: 1.55; }
+.fuel-rental-callout { min-height: 112px; padding: 14px; display: grid; place-content: center; gap: 10px; border: 1px dashed rgba(242, 189, 105, 0.25); text-align: center; }
+.fuel-rental-callout p { margin: 0; color: #8799a0; font-size: 13px; }
+.fuel-storage-overview { padding: 12px; border: 1px solid rgba(242, 189, 105, 0.2); background: rgba(112, 79, 34, 0.08); }
+.fuel-storage-overview > div:first-child { display: flex; justify-content: space-between; gap: 10px; color: #81959c; font-size: 12px; }
+.fuel-storage-overview strong { color: #ffe4b5; }
+.fuel-storage-overview small { color: #758992; font-size: 12px; }
+.fuel-warehouse-trade { margin-top: 9px; display: grid; grid-template-columns: minmax(130px, 1fr) 130px 130px; align-items: end; gap: 8px; }
+.fuel-policy-form.warehouse { margin-top: 9px; grid-template-columns: repeat(3, minmax(130px, 1fr)) 140px; }
+.cancel-warehouse { margin-top: 10px; border: 0; color: #7e9299; background: transparent; cursor: pointer; }
+.cancel-warehouse:disabled { opacity: 0.4; cursor: not-allowed; }
+.fuel-last-settlement > div:last-child { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); border: 1px solid var(--border); }
+.fuel-last-settlement > div:last-child span { min-height: 62px; padding: 10px; display: flex; flex-direction: column; justify-content: center; gap: 5px; border-right: 1px solid var(--border); color: #718892; font-size: 12px; }
+.fuel-last-settlement > div:last-child span:last-child { border-right: 0; }
+.fuel-last-settlement > div:last-child strong { color: #d3e4e5; font-size: 14px; }
 
 .company-section { padding-top: 18px; }
 .goal-card { margin-top: 13px; padding: 11px 12px; border: 1px solid rgba(80, 223, 206, 0.16); background: rgba(26, 71, 72, 0.12); }
@@ -1173,6 +1262,10 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .ship-family-menu { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
   .purchase-order-grid { grid-template-columns: repeat(2, minmax(250px, 1fr)); }
   .owned-fleet-grid, .ship-catalog-grid { grid-template-columns: repeat(2, minmax(280px, 1fr)); }
+  .fuel-hero { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fuel-hero > div:first-child { grid-column: 1 / -1; }
+  .fuel-contract-builder { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
+  .fuel-contract-list article { grid-template-columns: repeat(3, minmax(130px, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -1189,6 +1282,16 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .primary-view-tabs button { flex: 1; min-width: 0; justify-content: center; padding-inline: 8px; }
   .primary-view-tabs small { display: none; }
   .fleet-workspace { padding: 8px; }
+  .fuel-workspace { padding: 8px; }
+  .fuel-dashboard-grid, .fuel-hero { grid-template-columns: 1fr; }
+  .fuel-hero > div:first-child { grid-column: auto; }
+  .fuel-section-card, .fuel-hero { padding: 18px; }
+  .fuel-price-history-controls { width: 100%; align-items: center; justify-content: space-between; }
+  .fuel-price-history-controls p { margin-bottom: 0; text-align: right; }
+  .fuel-contract-builder, .fuel-policy-form, .fuel-policy-form.warehouse, .fuel-warehouse-trade { grid-template-columns: 1fr; }
+  .fuel-contract-list article { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fuel-contract-list article > button { grid-column: 1 / -1; }
+  .fuel-last-settlement > div:last-child { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fleet-overview { grid-template-columns: 1fr; padding: 18px; }
   .fleet-overview .top-policy { grid-column: auto; }
   .fleet-overview-stats { min-width: 0; }

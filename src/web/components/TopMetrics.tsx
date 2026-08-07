@@ -1,4 +1,4 @@
-import type { GameState } from "../../game.js";
+import { currentFuelPrice, type GameState } from "../../game.js";
 import { formatCredits, formatGameDate, formatNumber } from "../format.js";
 
 interface TopMetricsProps {
@@ -14,6 +14,7 @@ export function TopMetrics({ game }: TopMetricsProps) {
     { label: "昨日总成本", value: formatCredits((latest?.operatingCost ?? 0) + (latest?.overhead ?? 0)), tone: "warning" },
     { label: "昨日利润", value: formatCredits(profit), tone: profit >= 0 ? "positive" : "negative" },
     { label: "昨日旅客航段", value: formatNumber(latest?.passengers ?? 0), tone: "normal" },
+    { label: "当前燃料价格", value: `${currentFuelPrice(game).toFixed(3)} Cr`, tone: "fuel" },
   ];
   return (
     <section className="top-metrics">
