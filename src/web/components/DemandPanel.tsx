@@ -5,11 +5,12 @@ interface DemandPanelProps {
   galaxy: GeneratedGalaxy;
   settlement: DaySettlement;
   selectedPortId: string;
+  onSelectPort?: (portId: string) => void;
 }
 
 const TYPE_LABELS = { business: "商务", leisure: "休闲旅游", budget: "廉价", luxury: "高端" } as const;
 
-export function DemandPanel({ galaxy, settlement, selectedPortId }: DemandPanelProps) {
+export function DemandPanel({ galaxy, settlement, selectedPortId, onSelectPort }: DemandPanelProps) {
   const port = galaxy.ports.find((candidate) => candidate.id === selectedPortId);
   const system = galaxy.systems.find((candidate) => candidate.id === port?.systemId);
   if (!port || !system) return null;
@@ -68,7 +69,7 @@ export function DemandPanel({ galaxy, settlement, selectedPortId }: DemandPanelP
       <div className="subheading"><span>热门目的地</span><small>潜在 / 实际</small></div>
       <div className="destination-list">
         {destinations.map((destination) => (
-          <div className="destination-row" key={destination.port.id}>
+          <button className="destination-row" key={destination.port.id} type="button" onClick={() => onSelectPort?.(destination.port.id)} disabled={!onSelectPort}>
             <div className="destination-label">
               <strong>{destination.port.name}</strong>
               <span>{formatNumber(destination.potential)} / {formatNumber(destination.actual)}</span>
@@ -77,7 +78,7 @@ export function DemandPanel({ galaxy, settlement, selectedPortId }: DemandPanelP
               <span style={{ width: `${(destination.potential / maximumDemand) * 100}%` }} />
               <i style={{ width: `${(destination.actual / maximumDemand) * 100}%` }} />
             </div>
-          </div>
+          </button>
         ))}
         {destinations.length === 0 && <p className="empty-state">该星港目前没有可达市场。</p>}
       </div>

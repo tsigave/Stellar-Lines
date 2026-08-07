@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   advanceGameDay,
   buyFuelForWarehouse,
@@ -51,11 +51,35 @@ import { GenerationPanel } from "./components/GenerationPanel.js";
 import { OperationsPanel } from "./components/OperationsPanel.js";
 import { RouteEconomicsPanel } from "./components/RouteEconomicsPanel.js";
 import { SchedulePanel } from "./components/SchedulePanel.js";
+import { StarportFlightsPanel } from "./components/StarportFlightsPanel.js";
 import { TimeControls, type GameSpeed } from "./components/TimeControls.js";
 import { TopMetrics } from "./components/TopMetrics.js";
 import { loadStoredGame, persistGame } from "./storage.js";
 
 const SAVE_KEY = "stellar-lines-v0-save";
+const UI_THEME_KEY = "stellar-lines-ui-theme";
+const INSPECTOR_WIDTH_KEY = "stellar-lines-inspector-width";
+type UiTheme = "deep-space" | "aurora" | "command-deck";
+
+function storedUiTheme(): UiTheme {
+  try {
+    const stored = window.localStorage.getItem(UI_THEME_KEY);
+    if (stored === "aurora" || stored === "command-deck") return stored;
+  } catch {
+    // UI preferences are optional and must not block the game.
+  }
+  return "deep-space";
+}
+
+function storedInspectorWidth(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(INSPECTOR_WIDTH_KEY));
+    if (Number.isFinite(stored) && stored >= 340 && stored <= 720) return stored;
+  } catch {
+    // UI preferences are optional and must not block the game.
+  }
+  return 440;
+}
 
 interface GameSession {
   generated: ReturnType<typeof createGeneratedScenario>;
@@ -104,9 +128,21 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [showNewGame, setShowNewGame] = useState(!session.restored);
-  const [activeView, setActiveView] = useState<"map" | "fleet" | "fuel" | "schedule" | "route">("map");
+  const [showSettings, setShowSettings] = useState(false);
+  const [uiTheme, setUiTheme] = useState<UiTheme>(storedUiTheme);
+  const [inspectorWidth, setInspectorWidth] = useState(storedInspectorWidth);
+  const [activeView, setActiveView] = useState<"company" | "map" | "fleet" | "fuel" | "schedule" | "route">("map");
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(session.game.routes[0]?.id ?? null);
   const { generated, game } = session;
+
+  useEffect(() => {
+    document.documentElement.dataset.uiTheme = uiTheme;
+    try { window.localStorage.setItem(UI_THEME_KEY, uiTheme); } catch { /* optional preference */ }
+  }, [uiTheme]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorWidth)); } catch { /* optional preference */ }
+  }, [inspectorWidth]);
 
   const newGamePreview = useMemo(() => {
     try {
@@ -199,6 +235,28 @@ export function App() {
   const createRoute = (input: CreateRouteInput) =>
     commit(() => createPlayerRoute(game, input, generated.galaxy, generated.scenario.shipTypes));
 
+  const changeInspectorWidth = (value: number) => setInspectorWidth(Math.max(340, Math.min(720, Math.round(value))));
+  const beginInspectorResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = inspectorWidth;
+    const move = (moveEvent: PointerEvent) => changeInspectorWidth(startWidth - (moveEvent.clientX - startX));
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+  };
+  const resizeInspectorWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft") changeInspectorWidth(inspectorWidth + 20);
+    else if (event.key === "ArrowRight") changeInspectorWidth(inspectorWidth - 20);
+    else if (event.key === "Home") changeInspectorWidth(340);
+    else if (event.key === "End") changeInspectorWidth(720);
+    else return;
+    event.preventDefault();
+  };
+
   const previewLaneCount = newGamePreview?.galaxy.systemLanes.filter((lane) => lane.mode === "hyperspace").length ?? 0;
   const baseOptions = (newGamePreview?.galaxy.ports ?? []).map((port) => {
     const system = newGamePreview?.galaxy.systems.find((candidate) => candidate.id === port.systemId);
@@ -212,14 +270,18 @@ export function App() {
         <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.6</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
+        <button className="settings-button" onClick={() => setShowSettings(true)}>界面设置</button>
         <div className={saveWarning ? "header-indicator warning" : "header-indicator"}><i />{saveWarning ? "存档受限" : "自动存档"}</div>
       </header>
 
       <TopMetrics game={game} />
 
       <nav className="primary-view-tabs" aria-label="主要功能">
+        <button className={activeView === "company" ? "active" : ""} onClick={() => setActiveView("company")}>
+          <span>企业总览</span><small>目标 · 航线 · 声誉</small>
+        </button>
         <button className={activeView === "map" ? "active" : ""} onClick={() => setActiveView("map")}>
-          <span>星图运营</span><small>星港 · 航线 · 市场</small>
+          <span>星图运营</span><small>星港 · 航班 · 新航线</small>
         </button>
         <button className={activeView === "fleet" ? "active" : ""} onClick={() => setActiveView("fleet")}>
           <span>舰队管理</span><small>购买 · 舱位 · 维护</small>
@@ -235,7 +297,27 @@ export function App() {
         </button>}
       </nav>
 
-      {activeView === "route" && selectedRouteId ? (
+      {activeView === "company" ? (
+        <main className="company-workspace">
+          <div className="company-dashboard-hero glass-panel">
+            <div><span className="eyebrow">COMPANY OVERVIEW</span><h2>玩家企业信息总览</h2><p>集中查看经营目标、旅客偏好、航线表现和已公布事件。</p></div>
+            <div><span>公司声誉</span><strong>{game.companyReputation.toFixed(1)}</strong></div>
+            <div><span>运营航线</span><strong>{game.routes.filter((route) => route.active).length}</strong></div>
+            <div><span>现役舰船</span><strong>{game.fleet.length}</strong></div>
+          </div>
+          <section className="company-dashboard-panel glass-panel">
+            <CompanyPanel
+              game={game}
+              galaxy={generated.galaxy}
+              shipTypes={generated.scenario.shipTypes}
+              events={events}
+              onToggleRoute={(routeId) => commit(() => togglePlayerRoute(game, routeId))}
+              onOpenRoute={(routeId) => { setSelectedRouteId(routeId); setActiveView("route"); setSpeed(0); }}
+              onCloseRoute={(routeId) => commit(() => closePlayerRoute(game, routeId))}
+            />
+          </section>
+        </main>
+      ) : activeView === "route" && selectedRouteId ? (
         <RouteEconomicsPanel
           game={game}
           galaxy={generated.galaxy}
@@ -285,7 +367,7 @@ export function App() {
           onInvestCapacity={(portId) => commit(() => investInStarportCapacity(game, portId, generated.galaxy, generated.scenario.shipTypes))}
         />
       ) : (
-        <main className="workspace">
+        <main className="workspace" style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}>
           <div className="map-game-stack">
             <GalaxyMap
               key={generated.galaxy.config.seed}
@@ -305,7 +387,27 @@ export function App() {
               </div>
             )}
           </div>
+          <div
+            className="vertical-splitter"
+            role="separator"
+            aria-label="调整星港侧栏宽度"
+            aria-orientation="vertical"
+            aria-valuemin={340}
+            aria-valuemax={720}
+            aria-valuenow={inspectorWidth}
+            tabIndex={0}
+            onPointerDown={beginInspectorResize}
+            onKeyDown={resizeInspectorWithKeyboard}
+          ><i /></div>
           <aside className="inspector-panel glass-panel">
+            <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} onSelectPort={setSelectedPortId} />
+            <StarportFlightsPanel
+              game={game}
+              galaxy={generated.galaxy}
+              selectedPortId={selectedPortId}
+              onOpenSchedule={() => { setActiveView("schedule"); setSpeed(0); }}
+              onOpenRoute={(routeId) => { setSelectedRouteId(routeId); setActiveView("route"); setSpeed(0); }}
+            />
             <OperationsPanel
               game={game}
               galaxy={generated.galaxy}
@@ -313,16 +415,6 @@ export function App() {
               selectedPortId={selectedPortId}
               onCreateRoute={createRoute}
               onOpenFleet={() => setActiveView("fleet")}
-            />
-            <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} />
-            <CompanyPanel
-              game={game}
-              galaxy={generated.galaxy}
-              shipTypes={generated.scenario.shipTypes}
-              events={events}
-              onToggleRoute={(routeId) => commit(() => togglePlayerRoute(game, routeId))}
-              onOpenRoute={(routeId) => { setSelectedRouteId(routeId); setActiveView("route"); setSpeed(0); }}
-              onCloseRoute={(routeId) => commit(() => closePlayerRoute(game, routeId))}
             />
           </aside>
         </main>
@@ -350,6 +442,29 @@ export function App() {
               onBasePortChange={setDraftBasePortId}
             />
           </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="界面设置">
+          <section className="settings-dialog glass-panel">
+            <div className="settings-heading">
+              <div><span className="eyebrow">INTERFACE SETTINGS</span><h2>界面设置</h2><p>主题和分栏宽度会保存在当前浏览器。</p></div>
+              <button type="button" onClick={() => setShowSettings(false)}>关闭</button>
+            </div>
+            <h3>视觉主题</h3>
+            <div className="theme-options">
+              <button type="button" className={uiTheme === "deep-space" ? "active deep-space" : "deep-space"} aria-pressed={uiTheme === "deep-space"} onClick={() => setUiTheme("deep-space")}><i /><strong>深空航务</strong><span>工业直角面板、均衡密度与航务仪表结构</span></button>
+              <button type="button" className={uiTheme === "aurora" ? "active aurora" : "aurora"} aria-pressed={uiTheme === "aurora"} onClick={() => setUiTheme("aurora")}><i /><strong>极光玻璃</strong><span>悬浮圆角卡片、玻璃模糊、宽松间距与胶囊导航</span></button>
+              <button type="button" className={uiTheme === "command-deck" ? "active command-deck" : "command-deck"} aria-pressed={uiTheme === "command-deck"} onClick={() => setUiTheme("command-deck")}><i /><strong>舰桥终端</strong><span>高密度网格、硬边框、紧凑表格与战术终端导航</span></button>
+            </div>
+            <div className="panel-width-setting">
+              <div><h3>星港侧栏宽度</h3><p>也可以直接拖动星图与侧栏之间的分隔条；方向键每次调整 20px。</p></div>
+              <strong>{inspectorWidth}px</strong>
+              <input aria-label="星港侧栏宽度" type="range" min="340" max="720" step="10" value={inspectorWidth} onChange={(event) => changeInspectorWidth(Number(event.target.value))} />
+              <button type="button" onClick={() => changeInspectorWidth(440)}>恢复默认</button>
+            </div>
+          </section>
         </div>
       )}
     </div>

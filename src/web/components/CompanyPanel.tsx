@@ -119,7 +119,7 @@ export function CompanyPanel({
             </article>
           );
         })}
-        {game.routes.length === 0 && <p className="empty-state larger">尚未建立航线。请在上方星港运营区完成第一条航线。</p>}
+        {game.routes.length === 0 && <p className="empty-state larger">尚未建立航线。请前往“星图运营”，选择星港并开通第一条航线。</p>}
       </div>
 
       <div className="section-title">世界动态</div>

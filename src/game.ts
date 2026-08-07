@@ -759,7 +759,14 @@ export function buildGameSchedule(
     loadFactorByRoute,
     committedFlights,
   });
-  return { ...schedule, shipLogs: schedule.shipLogs.filter((entry) => !entry.shipId.startsWith("ai:")) };
+  const historyCutoffMinute = Math.max(0, state.day - 7) * 1_440;
+  const retainedFlights = (state.scheduledFlights ?? []).filter((flight) =>
+    flight.departureMinute >= historyCutoffMinute && flight.departureMinute < scheduleStartMinute,
+  );
+  const flightById = new Map(retainedFlights.map((flight) => [flight.id, flight]));
+  for (const flight of schedule.flights) flightById.set(flight.id, flight);
+  const flights = [...flightById.values()].sort((left, right) => left.departureMinute - right.departureMinute);
+  return { ...schedule, flights, shipLogs: schedule.shipLogs.filter((entry) => !entry.shipId.startsWith("ai:")) };
 }
 
 function operationalPlayerRoutes(state: GameState, shipTypes: readonly ShipType[]): Route[] {

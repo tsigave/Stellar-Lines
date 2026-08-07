@@ -209,8 +209,8 @@ export function OperationsPanel({
     <section className="starport-operations">
       <div className="panel-heading compact-heading">
         <span className="eyebrow">STARPORT OPERATIONS</span>
-        <h2>星港与航线</h2>
-        <p>地图选中的星港会自动成为候选目的地。</p>
+        <h2>新建航线</h2>
+        <p>从公司基地开设服务；地图选中的星港会自动成为候选目的地。</p>
       </div>
 
       <div className="starport-route-summary">

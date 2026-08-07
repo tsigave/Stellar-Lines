@@ -1839,6 +1839,24 @@ test("v0.6 跨日航班保留已承诺时隙且同一舰船不会重复占用", 
   }
 });
 
+test("v0.6 日结后保留最近七日真实航班供星港历史查询", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const types = generated.scenario.shipTypes;
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id, types);
+  game = configureShipsForTest(game, [game.fleet[0]!.id], types);
+  game = createPlayerRoute(game, { name: "History", originPortId: base.id, destinationPortId: destination.id, shipIds: [game.fleet[0]!.id], fareMultiplier: 1, routingMode: "hyperspace" }, generated.galaxy, types).state;
+  const completedDay = game.day;
+  const completedFlightIds = game.scheduledFlights
+    .filter((flight) => flight.companyId === "player" && Math.floor(flight.departureMinute / 1_440) === completedDay)
+    .map((flight) => flight.id);
+  assert.ok(completedFlightIds.length > 0);
+  game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  assert.ok(completedFlightIds.every((id) => game.scheduledFlights.some((flight) => flight.id === id)));
+  assert.ok(game.scheduledFlights.some((flight) => flight.departureMinute < game.day * 1_440));
+});
+
 test("v0.6 手工替换老船且双向价格默认联动", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
   const types = generated.scenario.shipTypes;

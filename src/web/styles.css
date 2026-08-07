@@ -20,6 +20,37 @@
   --map-transition-ease: cubic-bezier(0.22, 0.75, 0.18, 1);
 }
 
+:root[data-ui-theme="aurora"] {
+  --bg: #090817;
+  --panel: rgba(20, 18, 48, 0.88);
+  --panel-strong: rgba(28, 24, 61, 0.97);
+  --border: rgba(150, 164, 255, 0.2);
+  --border-strong: rgba(114, 202, 255, 0.48);
+  --muted: #9a9bc5;
+  --faint: #5b5a87;
+  --text: #e8e9ff;
+  --teal: #72d7ff;
+  --teal-soft: #b6efff;
+  --amber: #df9eff;
+  --red: #ff7ba7;
+}
+
+:root[data-ui-theme="command-deck"] {
+  font-family: "Cascadia Mono", Consolas, "Microsoft YaHei", monospace;
+  --bg: #080b07;
+  --panel: rgba(16, 22, 13, 0.93);
+  --panel-strong: rgba(20, 28, 16, 0.98);
+  --border: rgba(165, 195, 99, 0.2);
+  --border-strong: rgba(177, 221, 83, 0.45);
+  --muted: #8f9b78;
+  --faint: #515b43;
+  --text: #e3ebd3;
+  --teal: #b4db59;
+  --teal-soft: #d9f59a;
+  --amber: #f0a650;
+  --red: #ff705f;
+}
+
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; min-width: 320px; min-height: 100%; margin: 0; }
 body { min-height: 100vh; overflow: hidden; font-size: 16px; }
@@ -36,6 +67,10 @@ button { color: inherit; }
     radial-gradient(circle at 45% 40%, rgba(17, 68, 75, 0.15), transparent 36%),
     linear-gradient(135deg, #05090f 0%, #07111b 55%, #05090f 100%);
 }
+:root[data-ui-theme="aurora"] .app-shell { background: radial-gradient(circle at 24% 22%, rgba(90, 70, 196, .3), transparent 32%), radial-gradient(circle at 78% 42%, rgba(56, 168, 207, .2), transparent 34%), linear-gradient(145deg, #090817, #111530 58%, #090817); }
+:root[data-ui-theme="command-deck"] .app-shell { background: linear-gradient(rgba(160, 200, 80, .025) 1px, transparent 1px), linear-gradient(90deg, rgba(160, 200, 80, .018) 1px, transparent 1px), linear-gradient(145deg, #070a06, #10160d 58%, #080b07); background-size: 24px 24px, 24px 24px, auto; }
+:root[data-ui-theme="aurora"] .app-header, :root[data-ui-theme="aurora"] .primary-view-tabs { background: rgba(10, 9, 28, .95); }
+:root[data-ui-theme="command-deck"] .app-header, :root[data-ui-theme="command-deck"] .primary-view-tabs { background: rgba(7, 11, 6, .97); }
 
 .app-header {
   display: flex;
@@ -70,7 +105,7 @@ button { color: inherit; }
 .header-sector span { color: var(--muted); font-size: 12px; }
 .header-sector strong { color: #afc3cd; font-size: 13px; font-weight: 600; }
 .header-indicator { margin-left: 18px; color: #84a39f; font-size: 12px; letter-spacing: 0.8px; }
-.new-game-button {
+.new-game-button, .settings-button {
   height: 31px;
   margin-left: 8px;
   padding: 0 13px;
@@ -79,7 +114,8 @@ button { color: inherit; }
   background: rgba(30, 104, 101, 0.18);
   cursor: pointer;
 }
-.new-game-button:hover { border-color: rgba(80, 223, 206, 0.58); background: rgba(30, 104, 101, 0.3); }
+.settings-button { margin-left: 0; color: var(--muted); border-color: var(--border); background: rgba(14, 31, 40, .38); }
+.new-game-button:hover, .settings-button:hover { border-color: var(--border-strong); color: var(--teal-soft); background: rgba(30, 104, 101, 0.3); }
 .header-indicator i, .simulation-status i {
   display: inline-block;
   width: 6px;
@@ -97,9 +133,13 @@ button { color: inherit; }
   overflow: hidden;
   padding: 10px 12px 8px;
   display: grid;
-  grid-template-columns: minmax(560px, 1fr) 440px;
-  gap: 10px;
+  grid-template-columns: minmax(560px, 1fr) 10px var(--inspector-width, 440px);
+  gap: 0;
 }
+.vertical-splitter { position: relative; min-height: 0; cursor: col-resize; touch-action: none; outline: none; }
+.vertical-splitter::before { content: ""; position: absolute; inset: 0 4px; background: rgba(91, 130, 139, .08); transition: background 140ms, box-shadow 140ms; }
+.vertical-splitter i { position: absolute; top: 50%; left: 3px; width: 4px; height: 48px; border: 1px solid var(--border-strong); background: var(--panel-strong); transform: translateY(-50%); }
+.vertical-splitter:hover::before, .vertical-splitter:focus::before { background: rgba(80, 223, 206, .18); box-shadow: 0 0 10px rgba(80, 223, 206, .12); }
 
 .primary-view-tabs {
   min-width: 0;
@@ -160,6 +200,16 @@ button { color: inherit; }
 .top-company-state.positive i { background: var(--teal); box-shadow: 0 0 7px var(--teal); }
 
 .schedule-workspace { min-height: 0; overflow: auto; padding: 14px 18px 32px; }
+.company-workspace { min-height: 0; overflow: auto; padding: 14px 18px 32px; }
+.company-dashboard-hero { padding: 18px 20px; display: grid; grid-template-columns: minmax(360px, 1fr) repeat(3, minmax(120px, .28fr)); align-items: center; gap: 12px; }
+.company-dashboard-hero p { margin: 7px 0 0; color: var(--muted); }
+.company-dashboard-hero > div:not(:first-child) { min-height: 70px; padding: 12px; display: flex; flex-direction: column; justify-content: center; border: 1px solid var(--border); background: rgba(8, 25, 33, .64); }
+.company-dashboard-hero > div:not(:first-child) span { color: var(--muted); font-size: 12px; }
+.company-dashboard-hero > div:not(:first-child) strong { margin-top: 4px; color: var(--teal-soft); font-size: 22px; }
+.company-dashboard-panel { margin-top: 12px; padding: 4px 20px 24px; }
+.company-dashboard-panel .company-section { padding-top: 14px; }
+.company-dashboard-panel .route-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 10px; }
+.company-dashboard-panel .event-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
 .schedule-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; }
 .schedule-hero h2, .schedule-card h2 { margin: 4px 0 6px; }
 .schedule-hero p, .schedule-card p { margin: 0; color: var(--muted); }
@@ -559,6 +609,45 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 
 .inspector-panel { padding: 0 17px 22px; }
 .inspector-panel .demand-section { padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.destination-row { width: 100%; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.destination-row:hover .destination-label strong { color: var(--teal-soft); }
+.destination-row:disabled { opacity: 1; cursor: default; }
+.starport-flight-section { padding: 18px 0; border-bottom: 1px solid var(--border); }
+.starport-operational-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.starport-operational-kpis span { min-width: 0; padding: 8px 9px; display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 11px; border: 1px solid var(--border); background: rgba(8, 25, 33, .48); }
+.starport-operational-kpis strong { overflow: hidden; color: #c9dcdf; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.starport-flight-heading { margin-top: 17px; }
+.starport-flight-heading button, .player-port-heading + button { min-height: 31px; border: 1px solid var(--border); color: #b9d2d5; background: rgba(15, 47, 56, .5); cursor: pointer; }
+.flight-window-tabs { margin-top: 11px; display: grid; grid-template-columns: 1fr 1fr; }
+.flight-window-tabs button { min-height: 34px; border: 1px solid var(--border); color: var(--muted); background: rgba(5, 15, 22, .65); cursor: pointer; }
+.flight-window-tabs button + button { border-left: 0; }
+.flight-window-tabs button.active { color: #e1faf5; background: rgba(35, 111, 107, .24); }
+.movement-window-note { margin: 7px 0 8px; color: #6f858d; font-size: 10px; line-height: 1.4; }
+.starport-flight-list { max-height: 430px; overflow: auto; border: 1px solid var(--border); border-top: 0; }
+.movement-timeline { position: relative; border-top: 1px solid var(--border); scroll-behavior: smooth; }
+.current-time-marker { min-height: 28px; padding: 5px 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--teal); border-top: 1px solid rgba(80, 223, 206, .55); border-bottom: 1px solid rgba(80, 223, 206, .28); background: rgba(31, 105, 99, .16); font-size: 10px; }
+.current-time-marker strong { color: #c7eee7; font-size: 10px; font-weight: 600; }
+.starport-flight-row { min-width: 0; padding: 9px 7px; display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 3px 8px; align-items: center; border-bottom: 1px solid var(--border); }
+.starport-flight-row.current-focus { background: rgba(34, 101, 96, .09); box-shadow: inset 0 1px rgba(80, 223, 206, .08); }
+.starport-flight-row:last-child { border-bottom: 0; }
+.movement-status { grid-column: 1; grid-row: 1 / 3; align-self: stretch; padding: 4px; display: grid; place-items: center; color: #8eddd1; font-size: 10px; line-height: 1.25; text-align: center; border-left: 2px solid var(--teal); background: rgba(38, 121, 113, .1); }
+.movement-status.delayed { color: #f3c174; border-left-color: var(--amber); background: rgba(126, 88, 31, .13); }
+.movement-status.cancelled { color: #ff9a96; border-left-color: var(--red); background: rgba(128, 43, 42, .15); }
+.flight-route-cell { min-width: 0; grid-column: 2; grid-row: 1; display: flex; flex-direction: column; }
+.flight-route-cell strong, .flight-route-cell small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flight-route-cell strong { color: #bfd2d6; font-size: 12px; }
+.flight-route-cell small, .flight-time-cell small, .flight-status-cell small { color: var(--muted); font-size: 10px; }
+.flight-time-cell { min-width: 0; grid-column: 2; grid-row: 2; display: flex; gap: 7px; align-items: center; }
+.flight-time-cell time { color: #8ca3aa; font-size: 10px; white-space: nowrap; }
+.flight-time-cell small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flight-status-cell { grid-column: 3; grid-row: 1 / 3; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.flight-status-cell strong { font-size: 11px; white-space: nowrap; }
+.starport-flight-row > button { grid-column: 3; grid-row: 2; min-height: 24px; padding: 2px 8px; border: 1px solid var(--border); color: #b9d2d5; background: rgba(15, 47, 56, .5); cursor: pointer; }
+.player-port-heading { margin: 18px 0 9px; }
+.player-port-heading > strong { color: var(--teal); font-size: 13px; }
+.player-flights { border-top: 1px solid var(--border); }
+.player-flights .flight-status-cell { grid-row: 1; align-self: end; }
+.starport-flight-list .empty-state { margin: 0; padding: 16px 10px; }
 .finance-section { padding: 18px 0 17px; border-bottom: 1px solid var(--border); }
 .section-heading-row { display: flex; align-items: center; justify-content: space-between; }
 .section-heading-row h2 { font-size: 17px; }
@@ -883,6 +972,25 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .new-game-heading { padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
 .new-game-heading button { border: 0; color: #80959d; background: transparent; cursor: pointer; }
 .new-game-dialog > .control-panel { overflow: visible; border: 0; box-shadow: none; background: transparent; }
+.settings-overlay { position: fixed; z-index: 110; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(1, 5, 9, .8); backdrop-filter: blur(8px); }
+.settings-dialog { width: min(780px, calc(100vw - 30px)); max-height: calc(100vh - 40px); padding: 20px; overflow: auto; background: var(--panel-strong); }
+.settings-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.settings-heading p, .panel-width-setting p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.settings-heading button, .panel-width-setting button { min-height: 32px; padding: 0 12px; border: 1px solid var(--border); color: var(--text); background: rgba(8, 20, 28, .64); cursor: pointer; }
+.settings-dialog > h3, .panel-width-setting h3 { margin: 18px 0 10px; color: #dcebea; font-size: 14px; font-weight: 600; }
+.theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.theme-options button { min-height: 132px; padding: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 1px solid var(--border); color: var(--text); background: rgba(7, 17, 25, .68); text-align: left; cursor: pointer; }
+.theme-options button.active { border-color: var(--border-strong); box-shadow: inset 0 0 0 1px var(--border-strong), 0 0 18px rgba(80, 223, 206, .08); }
+.theme-options i { width: 100%; height: 42px; display: block; border: 1px solid rgba(255,255,255,.08); }
+.theme-options .deep-space i { background: linear-gradient(135deg, #050a11 0 52%, #144a4a 52% 76%, #d49b4e 76%); }
+.theme-options .aurora i { background: linear-gradient(135deg, #0b0920 0 45%, #493a9e 45% 70%, #65cbf1 70%); }
+.theme-options .command-deck i { background: repeating-linear-gradient(0deg, rgba(180,219,89,.08) 0 2px, transparent 2px 8px), linear-gradient(135deg, #080b07 0 55%, #6f8d32 55% 76%, #e5903d 76%); }
+.theme-options strong { font-size: 14px; }
+.theme-options span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.panel-width-setting { margin-top: 20px; padding-top: 4px; display: grid; grid-template-columns: minmax(220px, 1fr) auto minmax(240px, 1fr) auto; align-items: center; gap: 12px; border-top: 1px solid var(--border); }
+.panel-width-setting h3 { margin-bottom: 0; }
+.panel-width-setting > strong { color: var(--teal); font-size: 15px; }
+.panel-width-setting input { width: 100%; }
 
 .time-controls {
   position: fixed;
@@ -1300,6 +1408,224 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .purchase-row button { height: 37px; border: 1px solid rgba(80, 223, 206, 0.4); color: #d3fff7; background: rgba(34, 119, 112, 0.23); cursor: pointer; }
 .global-toast { position: fixed; top: 194px; }
 
+/* Aurora Glass changes the interface structure: floating surfaces, generous spacing
+   and individually separated records instead of continuous instrument grids. */
+:root[data-ui-theme="aurora"] .app-shell {
+  grid-template-rows: 72px 82px 60px minmax(0, 1fr);
+}
+:root[data-ui-theme="aurora"] .app-header {
+  margin: 10px 14px 0;
+  padding: 0 20px;
+  border: 1px solid rgba(158, 183, 255, .22);
+  border-radius: 18px 18px 8px 8px;
+  background: rgba(14, 12, 37, .68);
+  box-shadow: 0 16px 38px rgba(2, 2, 18, .32);
+  backdrop-filter: blur(20px) saturate(145%);
+}
+:root[data-ui-theme="aurora"] .brand-mark {
+  border-radius: 50%;
+  transform: none;
+  background: radial-gradient(circle at 35% 30%, rgba(201, 239, 255, .34), rgba(87, 72, 185, .26) 58%, rgba(16, 13, 49, .84));
+  box-shadow: 0 0 0 5px rgba(116, 187, 255, .06), 0 0 22px rgba(124, 154, 255, .24);
+}
+:root[data-ui-theme="aurora"] :is(.new-game-button, .settings-button, .generate-button, .map-actions button, .icon-button) {
+  border-radius: 999px;
+}
+:root[data-ui-theme="aurora"] .top-metrics {
+  gap: 8px;
+  margin: 8px 14px 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(158, 183, 255, .18);
+  border-radius: 10px;
+  background: rgba(12, 12, 38, .58);
+  box-shadow: 0 14px 34px rgba(1, 3, 20, .24);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+:root[data-ui-theme="aurora"] .metric-date,
+:root[data-ui-theme="aurora"] .top-metric,
+:root[data-ui-theme="aurora"] .top-company-state {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(116, 101, 208, .13), rgba(82, 174, 220, .07));
+}
+:root[data-ui-theme="aurora"] .primary-view-tabs {
+  gap: 8px;
+  margin: 8px 14px 0;
+  padding: 6px;
+  border: 1px solid rgba(158, 183, 255, .18);
+  border-radius: 14px;
+  background: rgba(12, 11, 34, .54);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+:root[data-ui-theme="aurora"] .primary-view-tabs button {
+  min-width: 180px;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+:root[data-ui-theme="aurora"] .primary-view-tabs button.active {
+  border-color: rgba(129, 198, 255, .42);
+  background: linear-gradient(135deg, rgba(99, 79, 201, .42), rgba(57, 164, 205, .28));
+  box-shadow: 0 8px 22px rgba(30, 42, 125, .2), inset 0 1px rgba(255, 255, 255, .12);
+}
+:root[data-ui-theme="aurora"] .workspace {
+  grid-template-columns: minmax(560px, 1fr) 12px var(--inspector-width, 440px);
+  gap: 8px;
+  padding: 14px 16px 12px;
+}
+:root[data-ui-theme="aurora"] .glass-panel {
+  border-color: rgba(154, 177, 255, .2);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(30, 27, 70, .72), rgba(13, 20, 47, .64));
+  box-shadow: 0 20px 52px rgba(2, 2, 18, .32), inset 0 1px rgba(255, 255, 255, .06);
+  backdrop-filter: blur(20px) saturate(145%);
+}
+:root[data-ui-theme="aurora"] .vertical-splitter::before,
+:root[data-ui-theme="aurora"] .vertical-splitter i { border-radius: 999px; }
+:root[data-ui-theme="aurora"] .inspector-panel { padding: 0 20px 24px; }
+:root[data-ui-theme="aurora"] :is(input:not([type="range"]), select, .flight-window-tabs button, .starport-flight-heading button, .player-port-heading + button) {
+  border-radius: 9px;
+}
+:root[data-ui-theme="aurora"] .flight-window-tabs { gap: 7px; }
+:root[data-ui-theme="aurora"] .flight-window-tabs button + button { border-left: 1px solid var(--border); }
+:root[data-ui-theme="aurora"] .starport-flight-list.movement-timeline {
+  display: grid;
+  gap: 7px;
+  padding: 7px;
+  border: 0;
+  background: rgba(5, 7, 25, .2);
+}
+:root[data-ui-theme="aurora"] .starport-flight-row {
+  padding: 11px 10px;
+  border: 1px solid rgba(150, 164, 255, .16);
+  border-radius: 11px;
+  background: linear-gradient(135deg, rgba(73, 62, 139, .14), rgba(34, 107, 145, .08));
+}
+:root[data-ui-theme="aurora"] .starport-flight-row:last-child { border-bottom: 1px solid rgba(150, 164, 255, .16); }
+:root[data-ui-theme="aurora"] .movement-status,
+:root[data-ui-theme="aurora"] .current-time-marker,
+:root[data-ui-theme="aurora"] .status-pill { border-radius: 999px; }
+:root[data-ui-theme="aurora"] .movement-status { align-self: center; min-height: 34px; border-left-width: 1px; }
+:root[data-ui-theme="aurora"] .current-time-marker { border: 1px solid rgba(114, 202, 255, .3); }
+:root[data-ui-theme="aurora"] :is(.schedule-grid, .fuel-dashboard-grid, .route-detail-grid, .configuration-grid) { gap: 16px; }
+:root[data-ui-theme="aurora"] :is(.schedule-card, .fuel-section-card, .fleet-ship-card, .ship-catalog-card, .route-card, .company-dashboard-hero > div:not(:first-child), .starport-operational-kpis span) {
+  border-radius: 12px;
+}
+:root[data-ui-theme="aurora"] :is(.finance-grid, .class-demand, .fleet-overview-stats, .ship-spec-grid, .drive-specs, .fuel-curve-table) {
+  overflow: hidden;
+  border-radius: 11px;
+}
+
+/* Command Deck is intentionally denser and harder-edged: an uninterrupted data
+   grid, compact controls and tactical markers optimized for scanning. */
+:root[data-ui-theme="command-deck"] .app-shell {
+  position: relative;
+  grid-template-rows: 56px 60px 42px minmax(0, 1fr);
+}
+:root[data-ui-theme="command-deck"] .app-shell::after {
+  content: "";
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  pointer-events: none;
+  opacity: .17;
+  background: repeating-linear-gradient(180deg, transparent 0 3px, rgba(192, 235, 99, .055) 3px 4px);
+}
+:root[data-ui-theme="command-deck"] .app-header {
+  gap: 9px;
+  padding: 0 12px;
+  border-bottom: 2px solid rgba(180, 219, 89, .32);
+  box-shadow: none;
+}
+:root[data-ui-theme="command-deck"] .brand-mark {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--teal);
+  transform: none;
+  box-shadow: inset 0 0 0 3px rgba(180, 219, 89, .08);
+}
+:root[data-ui-theme="command-deck"] .brand-copy strong,
+:root[data-ui-theme="command-deck"] .eyebrow,
+:root[data-ui-theme="command-deck"] .section-title,
+:root[data-ui-theme="command-deck"] .primary-view-tabs span { letter-spacing: 1.5px; text-transform: uppercase; }
+:root[data-ui-theme="command-deck"] :is(.new-game-button, .settings-button, .generate-button, .map-actions button, .icon-button) {
+  border-radius: 0;
+  box-shadow: inset 3px 0 rgba(180, 219, 89, .22);
+}
+:root[data-ui-theme="command-deck"] .top-metrics {
+  padding: 0 8px;
+  border-bottom: 1px solid rgba(180, 219, 89, .32);
+  box-shadow: none;
+}
+:root[data-ui-theme="command-deck"] .metric-date { padding-right: 10px; }
+:root[data-ui-theme="command-deck"] .top-metric { min-width: 112px; padding: 0 10px; }
+:root[data-ui-theme="command-deck"] .top-metric strong { margin-top: 2px; font-size: 15px; }
+:root[data-ui-theme="command-deck"] .primary-view-tabs {
+  gap: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(180, 219, 89, .34);
+}
+:root[data-ui-theme="command-deck"] .primary-view-tabs button {
+  min-width: 190px;
+  padding: 0 14px;
+  border: 0;
+  border-left: 1px solid var(--border);
+}
+:root[data-ui-theme="command-deck"] .primary-view-tabs button:last-child { border-right: 1px solid var(--border); }
+:root[data-ui-theme="command-deck"] .primary-view-tabs button.active {
+  border-color: var(--border-strong);
+  background: linear-gradient(90deg, rgba(180, 219, 89, .22), rgba(180, 219, 89, .035));
+  box-shadow: inset 4px 0 var(--teal), inset 0 -2px var(--teal);
+}
+:root[data-ui-theme="command-deck"] .workspace {
+  grid-template-columns: minmax(560px, 1fr) 8px var(--inspector-width, 440px);
+  padding: 6px 8px;
+}
+:root[data-ui-theme="command-deck"] .glass-panel {
+  border-color: rgba(165, 195, 99, .26);
+  border-radius: 0;
+  border-left-width: 3px;
+  background: rgba(10, 15, 8, .9);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+:root[data-ui-theme="command-deck"] .vertical-splitter::before { inset: 0 3px; background: repeating-linear-gradient(180deg, rgba(180, 219, 89, .2) 0 2px, transparent 2px 6px); }
+:root[data-ui-theme="command-deck"] .vertical-splitter i { left: 2px; width: 4px; height: 34px; }
+:root[data-ui-theme="command-deck"] .inspector-panel { padding: 0 10px 14px; }
+:root[data-ui-theme="command-deck"] .panel-heading { margin-bottom: 12px; }
+:root[data-ui-theme="command-deck"] :is(input:not([type="range"]), select, button, .status-pill) { border-radius: 0; }
+:root[data-ui-theme="command-deck"] .flight-window-tabs { margin-top: 7px; }
+:root[data-ui-theme="command-deck"] .flight-window-tabs button { min-height: 29px; text-align: left; }
+:root[data-ui-theme="command-deck"] .starport-flight-section { padding: 11px 0; }
+:root[data-ui-theme="command-deck"] .starport-flight-list { max-height: 470px; }
+:root[data-ui-theme="command-deck"] .current-time-marker { min-height: 23px; padding: 3px 6px; border-color: var(--teal); background: rgba(180, 219, 89, .1); }
+:root[data-ui-theme="command-deck"] .current-time-marker::before { content: ">> LIVE"; color: var(--teal-soft); letter-spacing: 1px; }
+:root[data-ui-theme="command-deck"] .starport-flight-row {
+  min-height: 48px;
+  padding: 5px 6px;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  gap: 1px 6px;
+}
+:root[data-ui-theme="command-deck"] .starport-flight-row:nth-child(even) { background: rgba(180, 219, 89, .025); }
+:root[data-ui-theme="command-deck"] .movement-status { padding: 2px; border-left: 0; border-right: 3px solid var(--teal); background: rgba(180, 219, 89, .075); }
+:root[data-ui-theme="command-deck"] .movement-status.delayed { border-right-color: var(--amber); }
+:root[data-ui-theme="command-deck"] .movement-status.cancelled { border-right-color: var(--red); }
+:root[data-ui-theme="command-deck"] .starport-flight-row > button { min-height: 21px; padding: 1px 6px; }
+:root[data-ui-theme="command-deck"] :is(.schedule-workspace, .company-workspace, .fleet-workspace, .fuel-workspace) { padding: 8px 10px 22px; }
+:root[data-ui-theme="command-deck"] :is(.schedule-grid, .fuel-dashboard-grid, .route-detail-grid, .configuration-grid) { gap: 6px; }
+:root[data-ui-theme="command-deck"] :is(.schedule-card, .fuel-section-card, .fleet-ship-card, .ship-catalog-card, .route-card) { padding: 10px; border-radius: 0; }
+:root[data-ui-theme="command-deck"] :is(.company-dashboard-hero, .fleet-overview) { padding: 12px 14px; }
+:root[data-ui-theme="command-deck"] :is(.company-dashboard-hero > div:not(:first-child), .starport-operational-kpis span, .port-attributes span) {
+  border-radius: 0;
+  background: rgba(180, 219, 89, .035);
+}
+:root[data-ui-theme="command-deck"] :is(th, .fuel-curve-heading, .section-title) { text-transform: uppercase; letter-spacing: .8px; }
+:root[data-ui-theme="command-deck"] :is(td, th) { padding-top: 6px; padding-bottom: 6px; }
+:root[data-ui-theme="command-deck"] .settings-dialog { border-top: 3px solid var(--teal); }
+:root[data-ui-theme="command-deck"] .theme-options { gap: 5px; }
+:root[data-ui-theme="command-deck"] .theme-options button { min-height: 112px; padding: 8px; }
+
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
 ::-webkit-scrollbar-thumb { background: rgba(103, 147, 156, 0.2); }
@@ -1309,6 +1635,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .app-shell { height: auto; grid-template-rows: 64px 70px 52px auto; padding-bottom: 78px; }
   .workspace { overflow: visible; }
   .workspace { grid-template-columns: minmax(0, 1fr); }
+  .vertical-splitter { display: none; }
   .inspector-panel { display: block; }
   .finance-section { border: 0; }
   .map-stack, .map-panel { min-height: 610px; }
@@ -1323,6 +1650,8 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .fuel-hero > div:first-child { grid-column: 1 / -1; }
   .fuel-contract-builder { grid-template-columns: repeat(3, minmax(150px, 1fr)); }
   .fuel-contract-list article { grid-template-columns: repeat(3, minmax(130px, 1fr)); }
+  .company-dashboard-hero { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .company-dashboard-hero > div:first-child { grid-column: 1 / -1; }
 }
 
 @media (max-width: 760px) {
@@ -1340,6 +1669,14 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
   .primary-view-tabs small { display: none; }
   .fleet-workspace { padding: 8px; }
   .fuel-workspace { padding: 8px; }
+  .company-workspace { padding: 8px; }
+  .company-dashboard-hero { grid-template-columns: 1fr; padding: 18px; }
+  .company-dashboard-hero > div:first-child { grid-column: auto; }
+  .company-dashboard-panel { padding: 4px 14px 18px; }
+  .company-dashboard-panel .route-list, .company-dashboard-panel .event-list { grid-template-columns: 1fr; }
+  .theme-options { grid-template-columns: 1fr; }
+  .panel-width-setting { grid-template-columns: 1fr auto; }
+  .panel-width-setting input { grid-column: 1 / -1; }
   .fuel-dashboard-grid, .fuel-hero { grid-template-columns: 1fr; }
   .fuel-hero > div:first-child { grid-column: auto; }
   .fuel-section-card, .fuel-hero { padding: 18px; }
