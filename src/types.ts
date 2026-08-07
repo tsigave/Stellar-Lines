@@ -257,6 +257,8 @@ export interface ServiceLeg {
   fuelConsumptionPerDepartureFull?: number;
   fuelLoadPerDepartureEmpty?: number;
   fuelLoadPerDepartureFull?: number;
+  fuelMarketPrice?: number;
+  fuelDeliveredUnitCost?: number;
   operatingCostPerPassenger?: number;
   fareByClass: Record<PassengerClass, number>;
   comfort: number;
@@ -354,6 +356,9 @@ export interface ServiceSettlement {
   passengersByType: Record<PassengerType, number>;
   satisfaction: number;
   ticketRevenue: number;
+  fuelUnitsConsumed: number;
+  inventoryFuelUnitsUsed: number;
+  inventoryFuelValueUsed: number;
   operatingCost: number;
   costBreakdown: RouteCostBreakdown;
   netProfit: number;

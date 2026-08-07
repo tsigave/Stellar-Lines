@@ -16,6 +16,7 @@ import {
   placeShipPurchaseAgreement,
   setAutoMaintenanceThreshold,
   setAutoReplacementAge,
+  setFuelStoragePolicy,
   setPlayerRouteFares,
   updateFleetConfiguration,
   simulateCampaign,
@@ -109,7 +110,19 @@ export function App() {
   );
   const previewSettlement = useMemo(() => {
     const scenario = gameScenario(generated.scenario, generated.galaxy, game);
-    return simulateCampaign(scenario, { startDay: game.day, numberOfDays: 1 }).days[0]!.settlement;
+    return simulateCampaign(scenario, {
+      startDay: game.day,
+      numberOfDays: 1,
+      ...(game.fuelStorage.inventoryUsePriceThreshold !== null ? {
+        fuelInventorySupplies: [{
+          companyId: "player",
+          portId: game.fuelStorage.portId,
+          availableUnits: game.fuelStorage.quantity,
+          averageUnitCost: game.fuelStorage.averageUnitCost,
+          useAtOrAbove: game.fuelStorage.inventoryUsePriceThreshold,
+        }],
+      } : {}),
+    }).days[0]!.settlement;
   }, [game, generated]);
 
   useEffect(() => {
@@ -187,7 +200,7 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.5</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.5.1</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
         <div className={saveWarning ? "header-indicator warning" : "header-indicator"}><i />{saveWarning ? "存档受限" : "自动存档"}</div>
@@ -259,7 +272,12 @@ export function App() {
               onOpenFleet={() => setActiveView("fleet")}
             />
             <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} />
-            <FuelMarketPanel game={game} galaxy={generated.galaxy} selectedPortId={selectedPortId} />
+            <FuelMarketPanel
+              game={game}
+              galaxy={generated.galaxy}
+              selectedPortId={selectedPortId}
+              onPolicyChange={(buyAt, useAt) => commit(() => setFuelStoragePolicy(game, buyAt, useAt))}
+            />
             <CompanyPanel
               game={game}
               galaxy={generated.galaxy}

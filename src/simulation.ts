@@ -36,6 +36,15 @@ export interface SimulateDayInput {
   services: readonly ServiceLeg[];
   choiceParameters?: ChoiceParameters;
   journeySearch?: JourneySearchOptions;
+  fuelInventorySupplies?: readonly FuelInventorySupply[];
+}
+
+export interface FuelInventorySupply {
+  companyId: string;
+  portId: string;
+  availableUnits: number;
+  averageUnitCost: number;
+  useAtOrAbove: number;
 }
 
 export function simulateDay(input: SimulateDayInput): DaySettlement {
@@ -138,6 +147,12 @@ export function simulateDay(input: SimulateDayInput): DaySettlement {
     });
   }
 
+  const remainingFuelInventory = new Map(
+    (input.fuelInventorySupplies ?? []).map((supply) => [
+      `${supply.companyId}:${supply.portId}`,
+      { ...supply },
+    ]),
+  );
   const serviceSettlements: ServiceSettlement[] = input.services.map((service) => {
     const passengers = passengerByService.get(service.id) ?? 0;
     const passengersByClass = passengersByServiceClass.get(service.id) ?? zeroCabins();
@@ -153,6 +168,28 @@ export function simulateDay(input: SimulateDayInput): DaySettlement {
     ])) as Record<PassengerClass, number>;
     const costBreakdown = { ...(service.baseCostBreakdown ?? zeroCosts()) };
     costBreakdown.fuel += passengers * (service.operatingCostPerPassenger ?? 0);
+    const averageDepartures = service.departuresPerWeek / 7;
+    const emptyFuelUnits = (service.fuelConsumptionPerDepartureEmpty ?? 0) * averageDepartures;
+    const variableFuelUnitsPerPassenger = service.seatsPerDeparture > 0
+      ? ((service.fuelConsumptionPerDepartureFull ?? service.fuelConsumptionPerDepartureEmpty ?? 0) -
+        (service.fuelConsumptionPerDepartureEmpty ?? 0)) / service.seatsPerDeparture
+      : 0;
+    const fuelUnitsConsumed = Math.max(0, emptyFuelUnits + passengers * variableFuelUnitsPerPassenger);
+    const supplyKey = `${service.companyId}:${service.fromPortId}`;
+    const supply = remainingFuelInventory.get(supplyKey);
+    const canUseInventory = !!supply &&
+      (service.fuelMarketPrice ?? 0) >= supply.useAtOrAbove &&
+      supply.availableUnits > 0;
+    const inventoryFuelUnitsUsed = canUseInventory
+      ? Math.min(fuelUnitsConsumed, supply.availableUnits)
+      : 0;
+    if (supply) supply.availableUnits -= inventoryFuelUnitsUsed;
+    const inventoryFuelValueUsed = inventoryFuelUnitsUsed * (supply?.averageUnitCost ?? 0);
+    if (fuelUnitsConsumed > 0 && inventoryFuelUnitsUsed > 0) {
+      const spotFuelUnits = fuelUnitsConsumed - inventoryFuelUnitsUsed;
+      costBreakdown.fuel = inventoryFuelValueUsed +
+        spotFuelUnits * (service.fuelDeliveredUnitCost ?? costBreakdown.fuel / fuelUnitsConsumed);
+    }
     costBreakdown.total = costBreakdown.fuel + costBreakdown.staff + costBreakdown.port +
       costBreakdown.flightMaintenance + costBreakdown.fixedMaintenance +
       costBreakdown.ageSurcharge + costBreakdown.depreciation + costBreakdown.delay + costBreakdown.other;
@@ -172,6 +209,9 @@ export function simulateDay(input: SimulateDayInput): DaySettlement {
         ? (satisfactionByService.get(service.id) ?? 0) / passengers
         : service.satisfactionByClass.economy,
       ticketRevenue,
+      fuelUnitsConsumed,
+      inventoryFuelUnitsUsed,
+      inventoryFuelValueUsed,
       operatingCost: costBreakdown.total,
       costBreakdown,
       netProfit: ticketRevenue - costBreakdown.total,

@@ -4,7 +4,7 @@ import { PASSENGER_CLASSES, PASSENGER_TYPES } from "./types.js";
 import { applyEventsToPorts } from "./events.js";
 import { buildRouteServices } from "./routes.js";
 import { createRandom } from "./generation/random.js";
-import { FIXED_MAINTENANCE_COST_SCALE } from "./parameters.js";
+import { FIXED_MAINTENANCE_COST_SCALE, FUEL_OPERATING_COST_SCALE } from "./parameters.js";
 import type {
   CabinConfiguration,
   CampaignDay,
@@ -22,7 +22,7 @@ import type {
   WorldLeg,
 } from "./types.js";
 
-export const GAME_STATE_VERSION = 9;
+export const GAME_STATE_VERSION = 10;
 export const STARTING_CASH = 3_000_000;
 export const ROUTE_OPENING_COST = 25_000;
 export const DAILY_COMPANY_OVERHEAD = 700;
@@ -43,6 +43,17 @@ export const DEFAULT_AUTO_MAINTENANCE_THRESHOLD = 80;
 export const DAYS_PER_SHIP_YEAR = 360;
 export const SHIP_AGE_MAINTENANCE_RATE = 0.06;
 export const SHIP_AGE_COMFORT_LOSS_PER_YEAR = 1.5;
+export const CORE_FUEL_STORAGE_CAPACITY = 2_500;
+
+export interface FuelStorage {
+  portId: string;
+  capacity: number;
+  quantity: number;
+  /** Weighted average delivered cost, including procurement and handling. */
+  averageUnitCost: number;
+  autoBuyPriceThreshold: number | null;
+  inventoryUsePriceThreshold: number | null;
+}
 
 export type PlayerRoutingMode = Extract<TravelMode, "warp" | "hyperspace">;
 export type ShipMaintenanceState = "ready" | "due" | "required" | "maintenance";
@@ -283,6 +294,9 @@ export interface GameDayRecord {
   overhead: number;
   profit: number;
   passengers: number;
+  fuelPurchasedUnits?: number;
+  fuelPurchaseCost?: number;
+  fuelInventoryUsedUnits?: number;
   activeEventIds: readonly string[];
   announcedEventIds: readonly string[];
   routes: readonly GameRouteDaySummary[];
@@ -304,6 +318,7 @@ export interface GameState {
   routes: readonly Route[];
   history: readonly GameDayRecord[];
   fuelMarket: readonly FuelPriceRecord[];
+  fuelStorage: FuelStorage;
   nextShipNumber: number;
   nextFleetConfigurationNumber: number;
   nextPurchaseAgreementNumber: number;
@@ -392,12 +407,35 @@ function dynamicFuelPrice(port: Starport, seed: string, day: number): number {
   const portHash = hash(`${seed}:fuel:${port.id}`);
   const phaseA = (portHash % 6283) / 1000;
   const phaseB = ((portHash >>> 7) % 6283) / 1000;
-  const variation =
-    1 +
-    0.09 * Math.sin(day / 6.5 + phaseA) +
-    0.055 * Math.sin(day / 21 + phaseB) +
-    0.025 * Math.sin(day / 2.7 + phaseA / 2);
-  return Number(Math.max(0.7, port.fuelPrice * variation).toFixed(3));
+  const portBias = (((hash(`${seed}:fuel-bias:${port.id}`) % 2_001) / 1_000) - 1) * 0.2;
+  const latent = portBias +
+    0.78 * Math.sin(day / 12.5 + phaseA) +
+    0.46 * Math.sin(day / 5.8 + phaseB) +
+    0.2 * Math.sin(day / 2.7 + phaseA / 2);
+  // tanh provides soft 1–3 Cr bounds without sticking to either boundary.
+  const normal = 2 + Math.tanh(latent) * 0.96;
+
+  // Rare regimes use a ten-day raised-cosine envelope. Price, slope and peak
+  // are continuous, so a surplus or shortage is visible before it reaches its
+  // extreme and fades out without a one-day jump.
+  const windowLength = 48;
+  const halfDuration = 5;
+  const window = Math.floor((Math.max(1, day) - 1) / windowLength);
+  const dayInWindow = (Math.max(1, day) - 1) % windowLength;
+  const regimeHash = hash(`${seed}:fuel-regime:${port.id}:${window}`);
+  const regimeRoll = (regimeHash % 10_000) / 10_000;
+  const centerDay = 6 + (hash(`${seed}:fuel-window-center:${port.id}:${window}`) % 36);
+  const distanceFromCenter = Math.abs(dayInWindow - centerDay);
+  if (distanceFromCenter <= halfDuration && (regimeRoll < 0.1 || regimeRoll > 0.86)) {
+    const progress = (dayInWindow - (centerDay - halfDuration)) / (halfDuration * 2);
+    const envelope = Math.sin(Math.PI * progress) ** 2;
+    const tailVariation = (hash(`${seed}:fuel-tail:${port.id}:${window}`) % 1_001) / 1_000;
+    const target = regimeRoll < 0.1
+      ? 0.5 + tailVariation * 0.25
+      : 5 + tailVariation;
+    return Number((normal + (target - normal) * envelope).toFixed(3));
+  }
+  return Number(normal.toFixed(3));
 }
 
 function dynamicFuelPorts(galaxy: GeneratedGalaxy, day: number): Starport[] {
@@ -560,6 +598,14 @@ export function createNewGame(
     routes: [],
     history: [],
     fuelMarket: [fuelPriceRecord(galaxy, 1)],
+    fuelStorage: {
+      portId: basePort.id,
+      capacity: CORE_FUEL_STORAGE_CAPACITY,
+      quantity: 0,
+      averageUnitCost: 0,
+      autoBuyPriceThreshold: null,
+      inventoryUsePriceThreshold: null,
+    },
     nextShipNumber: 2,
     nextFleetConfigurationNumber: 1,
     nextPurchaseAgreementNumber: 1,
@@ -573,19 +619,33 @@ export function createNewGame(
 
 export function migrateGameState(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
-  const candidate = value as Record<string, unknown>;
+  let candidate = value as Record<string, unknown>;
   if (
     candidate.version === 8 &&
     (candidate.autoSellAgeYears === null || typeof candidate.autoSellAgeYears === "number")
   ) {
     const { autoSellAgeYears, ...rest } = candidate;
-    return {
+    candidate = {
       ...rest,
-      version: GAME_STATE_VERSION,
+      version: 9,
       autoReplacementAgeYears: autoSellAgeYears,
     };
   }
-  return value;
+  if (candidate.version === 9 && typeof candidate.basePortId === "string") {
+    return {
+      ...candidate,
+      version: GAME_STATE_VERSION,
+      fuelStorage: {
+        portId: candidate.basePortId,
+        capacity: CORE_FUEL_STORAGE_CAPACITY,
+        quantity: 0,
+        averageUnitCost: 0,
+        autoBuyPriceThreshold: null,
+        inventoryUsePriceThreshold: null,
+      },
+    };
+  }
+  return candidate;
 }
 
 export function isGameState(value: unknown): value is GameState {
@@ -609,6 +669,9 @@ export function isGameState(value: unknown): value is GameState {
     Array.isArray(candidate.routes) &&
     Array.isArray(candidate.history) &&
     Array.isArray(candidate.fuelMarket) &&
+    !!candidate.fuelStorage &&
+    typeof candidate.fuelStorage.quantity === "number" &&
+    typeof candidate.fuelStorage.capacity === "number" &&
     typeof candidate.autoMaintenanceThreshold === "number" &&
     (candidate.autoReplacementAgeYears === null || typeof candidate.autoReplacementAgeYears === "number")
   );
@@ -975,6 +1038,30 @@ export function setAutoReplacementAge(
     message: normalized === null
       ? "已关闭按船龄自动更新"
       : `舰船达到 ${normalized} 年船龄后将自动订购同型号新船，并在交付后更换`,
+  };
+}
+
+export function setFuelStoragePolicy(
+  state: GameState,
+  autoBuyPriceThreshold: number | null,
+  inventoryUsePriceThreshold: number | null,
+): GameActionResult {
+  requirePlaying(state);
+  const normalizePrice = (value: number | null): number | null => value === null
+    ? null
+    : Number(clamp(value, 0.5, 6).toFixed(2));
+  const buyAt = normalizePrice(autoBuyPriceThreshold);
+  const useAt = normalizePrice(inventoryUsePriceThreshold);
+  return {
+    state: {
+      ...state,
+      fuelStorage: {
+        ...state.fuelStorage,
+        autoBuyPriceThreshold: buyAt,
+        inventoryUsePriceThreshold: useAt,
+      },
+    },
+    message: `燃料库策略已更新：${buyAt === null ? "关闭自动买入" : `${buyAt.toFixed(2)} Cr 以下买满`}；${useAt === null ? "关闭库存优先" : `${useAt.toFixed(2)} Cr 以上优先取用库存`}`,
   };
 }
 
@@ -1487,16 +1574,67 @@ export function fleetFixedMaintenanceCost(
   };
 }
 
+interface AutomaticFuelPurchaseResult {
+  state: GameState;
+  purchasedUnits: number;
+  purchaseCost: number;
+  marketPrice: number;
+}
+
+function applyAutomaticFuelPurchase(
+  state: GameState,
+  galaxy: GeneratedGalaxy,
+): AutomaticFuelPurchaseResult {
+  const marketPrice = fuelPriceRecord(galaxy, state.day).prices[state.fuelStorage.portId] ?? 0;
+  const threshold = state.fuelStorage.autoBuyPriceThreshold;
+  if (threshold === null || marketPrice > threshold || state.fuelStorage.quantity >= state.fuelStorage.capacity) {
+    return { state, purchasedUnits: 0, purchaseCost: 0, marketPrice };
+  }
+  const deliveredUnitCost = marketPrice * FUEL_OPERATING_COST_SCALE;
+  const missingUnits = state.fuelStorage.capacity - state.fuelStorage.quantity;
+  const affordableUnits = deliveredUnitCost > 0 ? state.cash / deliveredUnitCost : 0;
+  const purchasedUnits = Math.max(0, Math.min(missingUnits, affordableUnits));
+  if (purchasedUnits <= 0) return { state, purchasedUnits: 0, purchaseCost: 0, marketPrice };
+  const purchaseCost = purchasedUnits * deliveredUnitCost;
+  const previousValue = state.fuelStorage.quantity * state.fuelStorage.averageUnitCost;
+  const quantity = state.fuelStorage.quantity + purchasedUnits;
+  return {
+    state: {
+      ...state,
+      cash: state.cash - purchaseCost,
+      fuelStorage: {
+        ...state.fuelStorage,
+        quantity,
+        averageUnitCost: (previousValue + purchaseCost) / quantity,
+      },
+    },
+    purchasedUnits,
+    purchaseCost,
+    marketPrice,
+  };
+}
+
 export function advanceGameDay(
   state: GameState,
   baseScenario: SimulationScenario,
   galaxy: GeneratedGalaxy,
 ): GameActionResult {
   requirePlaying(state);
-  const scenario = gameScenario(baseScenario, galaxy, state);
+  const fuelPurchase = applyAutomaticFuelPurchase(state, galaxy);
+  const operatingState = fuelPurchase.state;
+  const scenario = gameScenario(baseScenario, galaxy, operatingState);
   const campaignDay = simulateCampaign(scenario, {
-    startDay: state.day,
+    startDay: operatingState.day,
     numberOfDays: 1,
+    ...(operatingState.fuelStorage.inventoryUsePriceThreshold !== null ? {
+      fuelInventorySupplies: [{
+        companyId: "player",
+        portId: operatingState.fuelStorage.portId,
+        availableUnits: operatingState.fuelStorage.quantity,
+        averageUnitCost: operatingState.fuelStorage.averageUnitCost,
+        useAtOrAbove: operatingState.fuelStorage.inventoryUsePriceThreshold,
+      }],
+    } : {}),
   }).days[0]!;
   const company = campaignDay.settlement.companies.find(
     (candidate) => candidate.companyId === "player",
@@ -1504,65 +1642,76 @@ export function advanceGameDay(
   const revenue = company?.ticketRevenue ?? 0;
   const operatingCost = company?.operatingCost ?? 0;
   const operationalRouteIds = new Set(scenario.routes.filter((route) => route.companyId === "player").map((route) => route.id));
-  const idleFleet = state.fleet.filter((ship) => !ship.routeId || !operationalRouteIds.has(ship.routeId));
-  const idleFixedMaintenance = fleetFixedMaintenanceCost(idleFleet, baseScenario.shipTypes, state.day);
+  const idleFleet = operatingState.fleet.filter((ship) => !ship.routeId || !operationalRouteIds.has(ship.routeId));
+  const idleFixedMaintenance = fleetFixedMaintenanceCost(idleFleet, baseScenario.shipTypes, operatingState.day);
   const overhead = DAILY_COMPANY_OVERHEAD + idleFixedMaintenance.total;
   const profit = revenue - operatingCost - overhead;
-  const cash = state.cash + profit;
+  const inventoryFuelValueUsed = campaignDay.settlement.services.reduce(
+    (sum, service) => sum + service.inventoryFuelValueUsed,
+    0,
+  );
+  const inventoryFuelUnitsUsed = campaignDay.settlement.services.reduce(
+    (sum, service) => sum + service.inventoryFuelUnitsUsed,
+    0,
+  );
+  const cash = operatingState.cash + profit + inventoryFuelValueUsed;
   const passengers = company?.passengers ?? 0;
   const totalPassengers =
-    state.history.reduce((sum, record) => sum + record.passengers, 0) + passengers;
-  const nextDay = state.day + 1;
-  const agedFleet = ageFleetAfterDay(state, scenario);
+    operatingState.history.reduce((sum, record) => sum + record.passengers, 0) + passengers;
+  const nextDay = operatingState.day + 1;
+  const agedFleet = ageFleetAfterDay(operatingState, scenario);
   const automaticMaintenance = applyAutomaticMaintenance(
     agedFleet,
-    state.routes,
+    operatingState.routes,
     scenario,
     nextDay,
     cash,
-    state.autoMaintenanceThreshold,
+    operatingState.autoMaintenanceThreshold,
     baseScenario.shipTypes,
   );
   const delivery = deliverShipPurchaseOrders({
-    ...state,
+    ...operatingState,
     day: nextDay,
     cash: automaticMaintenance.cash,
     fleet: automaticMaintenance.fleet,
   }, baseScenario.shipTypes, nextDay);
-  const deliveredOrders = state.shipPurchaseOrders.filter((order) => order.deliveryDay <= nextDay);
+  const deliveredOrders = operatingState.shipPurchaseOrders.filter((order) => order.deliveryDay <= nextDay);
   const deliveredCount = deliveredOrders.reduce((sum, order) => sum + order.quantity, 0);
   const replacedCount = deliveredOrders.reduce(
     (sum, order) => sum + (order.replacementShipIds?.length ?? 0),
     0,
   );
   const automaticReplacement = orderAutomaticReplacements(
-    { ...delivery.state, routes: state.routes },
+    { ...delivery.state, routes: operatingState.routes },
     nextDay,
     baseScenario.shipTypes,
   );
   const finalCash = automaticReplacement.state.cash;
   const justCompletedGoal =
-    state.primaryGoalCompletedOnDay === null &&
+    operatingState.primaryGoalCompletedOnDay === null &&
     (finalCash >= CASH_GOAL || totalPassengers >= PASSENGER_GOAL);
   const primaryGoalCompletedOnDay = justCompletedGoal
-    ? state.day
-    : state.primaryGoalCompletedOnDay;
+    ? operatingState.day
+    : operatingState.primaryGoalCompletedOnDay;
   const lost = finalCash < 0 || (primaryGoalCompletedOnDay === null && nextDay >= DEADLINE_DAY);
   const record: GameDayRecord = {
-    day: state.day,
+    day: operatingState.day,
     cash: finalCash,
     revenue,
     operatingCost,
     overhead,
     profit: profit - automaticMaintenance.cost,
     passengers,
+    fuelPurchasedUnits: fuelPurchase.purchasedUnits,
+    fuelPurchaseCost: fuelPurchase.purchaseCost,
+    fuelInventoryUsedUnits: inventoryFuelUnitsUsed,
     activeEventIds: campaignDay.activeEventIds,
     announcedEventIds: campaignDay.announcedEventIds,
-    routes: routeSummaries(state, campaignDay, scenario),
+    routes: routeSummaries(operatingState, campaignDay, scenario),
   };
   return {
     state: {
-      ...state,
+      ...operatingState,
       day: nextDay,
       cash: finalCash,
       fleet: automaticReplacement.state.fleet,
@@ -1570,9 +1719,16 @@ export function advanceGameDay(
       shipPurchaseOrders: automaticReplacement.state.shipPurchaseOrders,
       nextShipNumber: delivery.state.nextShipNumber,
       nextPurchaseAgreementNumber: automaticReplacement.state.nextPurchaseAgreementNumber,
+      fuelStorage: {
+        ...automaticReplacement.state.fuelStorage,
+        quantity: Math.max(0, automaticReplacement.state.fuelStorage.quantity - inventoryFuelUnitsUsed),
+        averageUnitCost: automaticReplacement.state.fuelStorage.quantity - inventoryFuelUnitsUsed > 1e-9
+          ? automaticReplacement.state.fuelStorage.averageUnitCost
+          : 0,
+      },
       shipyardMarket: refreshShipyardMarket(automaticReplacement.state, baseScenario.shipTypes, nextDay),
-      history: [...state.history, record].slice(-90),
-      fuelMarket: [...state.fuelMarket, fuelPriceRecord(galaxy, nextDay)].slice(-90),
+      history: [...operatingState.history, record].slice(-90),
+      fuelMarket: [...operatingState.fuelMarket, fuelPriceRecord(galaxy, nextDay)].slice(-90),
       status: lost ? "lost" : "playing",
       primaryGoalCompletedOnDay,
     },
@@ -1584,6 +1740,8 @@ export function advanceGameDay(
       ? `${automaticReplacement.deferredCount} 艘舰船已到更新船龄，但资金不足；旧船继续运营并将在后续每日重试采购。`
       : deliveredCount > 0
       ? `船厂今日交付 ${deliveredCount} 艘舰船；请为新船分配统一配置方案。`
+      : fuelPurchase.purchasedUnits > 0
+      ? `基地燃料价 ${fuelPurchase.marketPrice.toFixed(2)} Cr，已自动买入 ${fuelPurchase.purchasedUnits.toFixed(1)} FU 并补充燃料库。`
       : automaticMaintenance.maintainedShipNames.length > 0
       ? `${automaticMaintenance.maintainedShipNames.join("、")} 返抵主基地，维护值已低于 ${state.autoMaintenanceThreshold}% 阈值并自动进场维护。`
       : justCompletedGoal

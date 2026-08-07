@@ -17,6 +17,22 @@ function blendedMultiplier(modifier: number | undefined, intensity: number): num
   return modifier === undefined ? 1 : 1 + (modifier - 1) * intensity;
 }
 
+function smoothstep(value: number): number {
+  const clamped = Math.max(0, Math.min(1, value));
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
+/** Fuel shocks ramp in and recover smoothly; demand keeps its existing timing. */
+export function fuelEventIntensity(event: MarketEvent, day: number): number {
+  if (day < event.startsOnDay) return 0;
+  if (day <= event.endsOnDay) {
+    const rampDays = Math.min(4, Math.max(1, event.endsOnDay - event.startsOnDay));
+    return smoothstep((day - event.startsOnDay) / rampDays);
+  }
+  if (event.recoveryDays <= 0) return 0;
+  return 1 - smoothstep((day - event.endsOnDay) / event.recoveryDays);
+}
+
 function affectsMarket(
   event: MarketEvent,
   originPortId: string,
@@ -55,10 +71,15 @@ export function applyEventsToPorts(
     for (const event of events) {
       if (!event.affectedPortIds.includes(port.id)) continue;
       const intensity = eventIntensity(event, day);
-      fuelPrice *= blendedMultiplier(event.fuelPriceModifier, intensity);
+      const fuelIntensity = fuelEventIntensity(event, day);
+      if (event.fuelPriceModifier !== undefined) {
+        const target = event.fuelPriceModifier >= 1 ? 6 : 0.5;
+        const strength = Math.min(1, Math.abs(event.fuelPriceModifier - 1));
+        fuelPrice += (target - fuelPrice) * strength * fuelIntensity;
+      }
       dailyCapacity *= blendedMultiplier(event.portCapacityModifier, intensity);
     }
-    return { ...port, fuelPrice, dailyCapacity };
+    return { ...port, fuelPrice: Math.max(0.5, Math.min(6, fuelPrice)), dailyCapacity };
   });
 }
 

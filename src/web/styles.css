@@ -568,6 +568,17 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fuel-chart line { stroke: rgba(112, 150, 161, 0.14); stroke-width: 1; }
 .fuel-chart polyline { fill: none; stroke: var(--amber); stroke-width: 2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 3px rgba(242, 189, 105, 0.48)); }
 .fuel-chart circle { fill: #fff0cd; stroke: var(--amber); stroke-width: 1; }
+.fuel-storage-card { margin: 8px 0 12px; padding: 11px; border: 1px solid rgba(242, 189, 105, 0.22); background: rgba(112, 79, 34, 0.09); }
+.fuel-storage-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fuel-storage-heading div { min-width: 0; display: grid; gap: 3px; }
+.fuel-storage-heading span, .fuel-storage-heading em { color: var(--muted); font-size: 12px; font-style: normal; }
+.fuel-storage-heading strong { color: #fff0cd; font-size: 15px; }
+.fuel-storage-meter { height: 5px; margin: 9px 0 6px; overflow: hidden; background: rgba(112, 150, 161, 0.15); }
+.fuel-storage-meter i { display: block; height: 100%; background: var(--amber); box-shadow: 0 0 5px rgba(242, 189, 105, 0.45); }
+.fuel-policy-grid { margin-top: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.fuel-policy-grid label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.fuel-policy-grid select { width: 100%; min-width: 0; }
+.fuel-storage-card > p { margin-bottom: 0; line-height: 1.5; }
 .fuel-price-grid { max-height: 132px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; overflow: auto; }
 .fuel-price-grid button { min-width: 0; padding: 6px 7px; display: flex; align-items: center; justify-content: space-between; gap: 5px; border: 1px solid var(--border); color: inherit; background: rgba(9, 22, 31, 0.58); opacity: 1; }
 .fuel-price-grid button.selected { border-color: rgba(242, 189, 105, 0.4); background: rgba(112, 79, 34, 0.13); }

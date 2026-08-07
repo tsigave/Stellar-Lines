@@ -16,11 +16,13 @@ import {
   createPlayerRoute,
   deliverShipPurchaseOrders,
   CHINESE_SYSTEM_NAMES,
+  CORE_FUEL_STORAGE_CAPACITY,
   DEFAULT_GALAXY_CONFIG,
   DAILY_COMPANY_OVERHEAD,
   EMERGENCY_FUEL_MARGIN,
   deterministicVariation,
   eventIntensity,
+  fuelEventIntensity,
   generateMarketDemands,
   allReferenceTimes,
   marketEventDemandMultiplier,
@@ -50,6 +52,7 @@ import {
   MAINTENANCE_REQUIRED_HOURS,
   setAutoMaintenanceThreshold,
   setAutoReplacementAge,
+  setFuelStoragePolicy,
   updateFleetConfiguration,
   advanceGameDay,
   closePlayerRoute,
@@ -457,22 +460,35 @@ test("v0.5 航段票款收入减全部成本严格等于净利润", () => {
   assert.ok(settlement.costBreakdown.depreciation > 0);
 });
 
-test("v0.5 普通日燃料约占完整成本四分之一且固定维护不再主导成本", () => {
-  const settlement = simulateCampaign(PROOF_OF_CONCEPT_SCENARIO, {
-    startDay: 1,
-    numberOfDays: 1,
-  }).days[0]!.settlement;
-  const costs = settlement.services.reduce((totals, serviceResult) => ({
-    fuel: totals.fuel + serviceResult.costBreakdown.fuel,
-    fixedMaintenance: totals.fixedMaintenance + serviceResult.costBreakdown.fixedMaintenance,
-    total: totals.total + serviceResult.costBreakdown.total,
-  }), { fuel: 0, fixedMaintenance: 0, total: 0 });
-  const fuelShare = costs.fuel / costs.total;
-  const fixedMaintenanceShare = costs.fixedMaintenance / costs.total;
+test("v0.5 随机可玩航线普通日燃料中位数约四分之一且高位不过度", () => {
+  const costShares = Array.from({ length: 12 }, (_, seedIndex) => {
+    const generated = createGeneratedScenario({
+      ...DEFAULT_GALAXY_CONFIG,
+      seed: `fuel-balance-${seedIndex}`,
+    });
+    const shipTypes = new Map(generated.scenario.shipTypes.map((shipType) => [shipType.id, shipType]));
+    return generated.scenario.routes.flatMap((route) => {
+      const shipType = shipTypes.get(route.shipTypeId)!;
+      return buildRouteServices(
+        route,
+        shipType,
+        generated.scenario.ports,
+        generated.scenario.worldLegs,
+      ).map((serviceLeg) => ({
+        fuel: serviceLeg.baseCostBreakdown!.fuel / serviceLeg.baseCostBreakdown!.total,
+        fixedMaintenance: serviceLeg.baseCostBreakdown!.fixedMaintenance / serviceLeg.baseCostBreakdown!.total,
+      }));
+    });
+  }).flat();
+  const fuelShares = costShares.map((share) => share.fuel).sort((left, right) => left - right);
+  const fixedShares = costShares.map((share) => share.fixedMaintenance).sort((left, right) => left - right);
+  const medianFuelShare = fuelShares[Math.floor(fuelShares.length * 0.5)]!;
+  const highFuelShare = fuelShares[Math.floor(fuelShares.length * 0.95)]!;
+  const medianFixedShare = fixedShares[Math.floor(fixedShares.length * 0.5)]!;
 
-  assert.ok(fuelShare >= 0.23 && fuelShare <= 0.27);
-  assert.ok(fixedMaintenanceShare <= 0.22);
-  assert.ok(fixedMaintenanceShare < fuelShare);
+  assert.ok(medianFuelShare >= 0.22 && medianFuelShare <= 0.28);
+  assert.ok(highFuelShare < 0.4);
+  assert.ok(medianFixedShare < 0.3);
 });
 
 test("自动存档超出配额时逐级缩短历史且不会抛出异常", () => {
@@ -535,6 +551,8 @@ test("v0.5 旧自动出售存档会迁移为交付后自动更新策略", () => 
   const migrated = migrateGameState(legacy);
   assert.ok(isGameState(migrated));
   assert.equal((migrated as GameState).autoReplacementAgeYears, 5);
+  assert.equal((migrated as GameState).fuelStorage.capacity, CORE_FUEL_STORAGE_CAPACITY);
+  assert.equal((migrated as GameState).fuelStorage.quantity, 0);
   assert.ok(!("autoSellAgeYears" in (migrated as object)));
 });
 
@@ -573,6 +591,12 @@ test("事件只在开始后生效，并在恢复期平滑消退", () => {
   assert.equal(eventIntensity(event, 20), 1);
   assert.equal(eventIntensity(event, 25), 0.5);
   assert.equal(eventIntensity(event, 30), 0);
+  assert.equal(fuelEventIntensity(event, 9), 0);
+  assert.equal(fuelEventIntensity(event, 10), 0);
+  assert.equal(fuelEventIntensity(event, 12), 0.5);
+  assert.equal(fuelEventIntensity(event, 14), 1);
+  assert.equal(fuelEventIntensity(event, 25), 0.5);
+  assert.equal(fuelEventIntensity(event, 30), 0);
   assert.equal(marketEventDemandMultiplier([event], 9, "a", "c", "business"), 1);
   assert.equal(marketEventDemandMultiplier([event], 10, "a", "c", "business"), 3);
   assert.equal(marketEventDemandMultiplier([event], 25, "a", "c", "business"), 2);
@@ -1410,6 +1434,86 @@ test("船只到达玩家设定阈值后自动维修", () => {
   assert.equal(shipMaintenanceState(game.fleet[0]!, game.day), "maintenance");
   assert.ok(game.day > belowThresholdDay);
   assert.equal(game.fleet[0]!.condition, 100);
+});
+
+test("v0.5.1 燃料价格平时在 1–3 Cr 震荡并偶尔触及两端行情", () => {
+  const generated = createGeneratedScenario({ ...DEFAULT_GALAXY_CONFIG, seed: "fuel-price-regimes" });
+  const records = Array.from({ length: 480 }, (_, offset) =>
+    fuelPriceRecord(generated.galaxy, offset + 1),
+  );
+  const prices = records.flatMap((record) => Object.values(record.prices));
+  const normalPrices = prices.filter((price) => price >= 1 && price <= 3);
+  const maximumDailyChange = Math.max(...generated.galaxy.ports.flatMap((port) => {
+    const series = records.map((record) => record.prices[port.id]!);
+    return series.slice(1).map((price, index) => Math.abs(price - series[index]!));
+  }));
+  const normalAboveTwoShare = normalPrices.filter((price) => price > 2).length / normalPrices.length;
+
+  assert.ok(prices.every((price) => price >= 0.5 && price <= 6));
+  assert.ok(normalPrices.length / prices.length > 0.9);
+  assert.ok(normalAboveTwoShare >= 0.4 && normalAboveTwoShare <= 0.6);
+  assert.ok(maximumDailyChange < 1.5);
+  assert.ok(prices.some((price) => price <= 0.75));
+  assert.ok(prices.some((price) => price >= 5));
+});
+
+test("v0.5.1 基地燃料库按低价买满并在高价时供给基地始发航线", () => {
+  const generated = createGeneratedScenario({ ...DEFAULT_GALAXY_CONFIG, seed: "fuel-storage" });
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id, generated.scenario.shipTypes);
+  game = configureShipsForTest(game, game.fleet.map((ship) => ship.id), generated.scenario.shipTypes);
+  game = createPlayerRoute(
+    game,
+    {
+      name: "Fuel Storage Route",
+      originPortId: base.id,
+      destinationPortId: destination.id,
+      shipIds: [game.fleet[0]!.id],
+      fareMultiplier: 1,
+      routingMode: "hyperspace",
+    },
+    generated.galaxy,
+    generated.scenario.shipTypes,
+  ).state;
+  game = setFuelStoragePolicy(game, 6, 0.5).state;
+  const cashBefore = game.cash;
+  game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+
+  assert.equal(game.history[0]!.fuelPurchasedUnits, CORE_FUEL_STORAGE_CAPACITY);
+  assert.ok((game.history[0]!.fuelPurchaseCost ?? 0) > 0);
+  assert.ok((game.history[0]!.fuelInventoryUsedUnits ?? 0) > 0);
+  assert.ok(game.fuelStorage.quantity < CORE_FUEL_STORAGE_CAPACITY);
+  assert.ok(game.fuelStorage.quantity > 0);
+  assert.ok(game.cash < cashBefore + game.history[0]!.profit);
+
+  const remoteSettlement = simulateDay({
+    markets: [],
+    services: [service({
+      id: "remote-fuel",
+      companyId: "player",
+      fromPortId: destination.id,
+      toPortId: base.id,
+      departuresPerWeek: 7,
+      fuelConsumptionPerDepartureEmpty: 10,
+      fuelConsumptionPerDepartureFull: 12,
+      fuelMarketPrice: 6,
+      fuelDeliveredUnitCost: 72,
+      baseCostBreakdown: {
+        fuel: 720, staff: 0, port: 0, flightMaintenance: 0,
+        fixedMaintenance: 0, ageSurcharge: 0, depreciation: 0,
+        delay: 0, other: 0, total: 720,
+      },
+    })],
+    fuelInventorySupplies: [{
+      companyId: "player",
+      portId: base.id,
+      availableUnits: 100,
+      averageUnitCost: 12,
+      useAtOrAbove: 3,
+    }],
+  }).services[0]!;
+  assert.equal(remoteSettlement.inventoryFuelUnitsUsed, 0);
 });
 
 test("燃料市场价格逐日变化并保留历史", () => {

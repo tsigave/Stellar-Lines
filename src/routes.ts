@@ -437,6 +437,8 @@ export function buildRouteServices(
         (sum, item) => sum + item.fuelLoadFull,
         0,
       ),
+      fuelMarketPrice: portsById.get(first.from.portId)!.fuelPrice,
+      fuelDeliveredUnitCost: portsById.get(first.from.portId)!.fuelPrice * FUEL_OPERATING_COST_SCALE,
       operatingCostPerPassenger: group.reduce(
         (sum, item) => sum + item.fuelCostPerPassenger,
         0,

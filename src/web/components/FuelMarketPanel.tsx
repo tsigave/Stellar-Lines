@@ -1,12 +1,15 @@
-import type { GameState, GeneratedGalaxy } from "../../index.js";
+import { FUEL_OPERATING_COST_SCALE, type GameState, type GeneratedGalaxy } from "../../index.js";
 
 interface FuelMarketPanelProps {
   game: GameState;
   galaxy: GeneratedGalaxy;
   selectedPortId: string;
+  onPolicyChange: (autoBuyPriceThreshold: number | null, inventoryUsePriceThreshold: number | null) => void;
 }
 
-export function FuelMarketPanel({ game, galaxy, selectedPortId }: FuelMarketPanelProps) {
+const PRICE_OPTIONS = Array.from({ length: 23 }, (_, index) => 0.5 + index * 0.25);
+
+export function FuelMarketPanel({ game, galaxy, selectedPortId, onPolicyChange }: FuelMarketPanelProps) {
   const port = galaxy.ports.find((candidate) => candidate.id === selectedPortId);
   if (!port) return null;
   const records = game.fuelMarket.slice(-30);
@@ -23,6 +26,11 @@ export function FuelMarketPanel({ game, galaxy, selectedPortId }: FuelMarketPane
   const first = values[0] ?? current;
   const change = first > 0 ? ((current - first) / first) * 100 : 0;
   const currentRecord = game.fuelMarket.at(-1);
+  const basePort = galaxy.ports.find((candidate) => candidate.id === game.fuelStorage.portId);
+  const basePrice = currentRecord?.prices[game.fuelStorage.portId] ?? basePort?.fuelPrice ?? 0;
+  const fillRate = game.fuelStorage.capacity > 0
+    ? game.fuelStorage.quantity / game.fuelStorage.capacity
+    : 0;
 
   return (
     <section className="fuel-market-section">
@@ -38,6 +46,29 @@ export function FuelMarketPanel({ game, galaxy, selectedPortId }: FuelMarketPane
         <polyline points={points} />
         {values.length > 0 && <circle cx={points.split(" ").at(-1)?.split(",")[0]} cy={points.split(" ").at(-1)?.split(",")[1]} r="3" />}
       </svg>
+      <section className="fuel-storage-card">
+        <div className="fuel-storage-heading">
+          <div><span>基地燃料库 · {basePort?.name ?? game.fuelStorage.portId}</span><strong>{game.fuelStorage.quantity.toFixed(1)} / {game.fuelStorage.capacity.toFixed(0)} FU</strong></div>
+          <em>当前报价 {basePrice.toFixed(2)} Cr</em>
+        </div>
+        <div className="fuel-storage-meter" aria-label={`燃料库存 ${(fillRate * 100).toFixed(0)}%`}><i style={{ width: `${Math.min(100, fillRate * 100)}%` }} /></div>
+        <small>库存平均买入价 {game.fuelStorage.quantity > 0 ? `${(game.fuelStorage.averageUnitCost / FUEL_OPERATING_COST_SCALE).toFixed(2)} Cr` : "—"} · 仅供从基地出发的自营航班使用</small>
+        <div className="fuel-policy-grid">
+          <label>自动买满价格
+            <select value={game.fuelStorage.autoBuyPriceThreshold ?? "off"} onChange={(event) => onPolicyChange(event.target.value === "off" ? null : Number(event.target.value), game.fuelStorage.inventoryUsePriceThreshold)}>
+              <option value="off">关闭自动买入</option>
+              {PRICE_OPTIONS.map((price) => <option key={price} value={price}>{price.toFixed(2)} Cr 以下</option>)}
+            </select>
+          </label>
+          <label>优先使用库存价格
+            <select value={game.fuelStorage.inventoryUsePriceThreshold ?? "off"} onChange={(event) => onPolicyChange(game.fuelStorage.autoBuyPriceThreshold, event.target.value === "off" ? null : Number(event.target.value))}>
+              <option value="off">关闭库存优先</option>
+              {PRICE_OPTIONS.map((price) => <option key={price} value={price}>{price.toFixed(2)} Cr 以上</option>)}
+            </select>
+          </label>
+        </div>
+        <p>低于买入阈值时按基地现价自动补满；高于使用阈值时，基地始发航班先消耗库存，不足部分再按市价采购。</p>
+      </section>
       <div className="fuel-price-grid">
         {galaxy.ports.map((candidate) => (
           <button key={candidate.id} className={candidate.id === selectedPortId ? "selected" : ""} disabled>

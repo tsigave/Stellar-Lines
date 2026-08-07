@@ -9,6 +9,7 @@ import {
 import { allReferenceTimes } from "./graph.js";
 import { buildRouteServices } from "./routes.js";
 import { simulateDay } from "./simulation.js";
+import type { FuelInventorySupply } from "./simulation.js";
 import type {
   CampaignCompanySummary,
   CampaignResult,
@@ -18,6 +19,7 @@ import type {
 export interface SimulateCampaignOptions {
   startDay?: number;
   numberOfDays: number;
+  fuelInventorySupplies?: readonly FuelInventorySupply[];
 }
 
 export function simulateCampaign(
@@ -31,6 +33,7 @@ export function simulateCampaign(
   const referenceTimes = allReferenceTimes(scenario.ports, scenario.worldLegs);
   const shipTypesById = new Map(scenario.shipTypes.map((ship) => [ship.id, ship]));
   const days: CampaignResult["days"][number][] = [];
+  const fuelInventorySupplies = (options.fuelInventorySupplies ?? []).map((supply) => ({ ...supply }));
 
   for (let offset = 0; offset < options.numberOfDays; offset += 1) {
     const day = startDay + offset;
@@ -56,11 +59,21 @@ export function simulateCampaign(
           passengerType,
         ),
     });
+    const settlement = simulateDay({ markets, services, fuelInventorySupplies });
+    for (const supply of fuelInventorySupplies) {
+      const used = settlement.services
+        .filter((service) => {
+          const candidate = services.find((item) => item.id === service.serviceLegId);
+          return candidate?.companyId === supply.companyId && candidate.fromPortId === supply.portId;
+        })
+        .reduce((sum, service) => sum + service.inventoryFuelUnitsUsed, 0);
+      supply.availableUnits = Math.max(0, supply.availableUnits - used);
+    }
     days.push({
       day,
       announcedEventIds: announcedEvents(scenario.events, day).map((event) => event.id),
       activeEventIds: activeEvents(scenario.events, day).map((event) => event.id),
-      settlement: simulateDay({ markets, services }),
+      settlement,
     });
   }
 

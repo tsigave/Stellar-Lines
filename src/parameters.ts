@@ -5,7 +5,7 @@ import type { ChoiceParameters, DemandParameters, PassengerClass, PassengerType 
  * market index. This converts that index into the delivered operating expense
  * (procurement, storage and handling included).
  */
-export const FUEL_OPERATING_COST_SCALE = 27;
+export const FUEL_OPERATING_COST_SCALE = 12;
 
 /** Effective share of the catalog maintenance reserve charged every day. */
 export const FIXED_MAINTENANCE_COST_SCALE = 0.25;
