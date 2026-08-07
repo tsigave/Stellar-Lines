@@ -1,3 +1,31 @@
+import { ASTRONOMICAL_UNIT_KM } from "../fuel.js";
+
+export type SublightDistanceUnit = "au" | "km";
+
+function scientificKilometers(value: number): string {
+  return value.toExponential(3).replace("e+", "e");
+}
+
+export function formatSublightDistanceKm(valueKm: number, unit: SublightDistanceUnit): string {
+  return unit === "au"
+    ? `${(valueKm / ASTRONOMICAL_UNIT_KM).toFixed(3)} AU`
+    : `${scientificKilometers(valueKm)} km`;
+}
+
+export function formatSublightDistanceAu(valueAu: number, unit: SublightDistanceUnit): string {
+  return unit === "au"
+    ? `${valueAu.toFixed(3)} AU`
+    : `${scientificKilometers(valueAu * ASTRONOMICAL_UNIT_KM)} km`;
+}
+
+export function sublightDistanceInputValue(valueAu: number, unit: SublightDistanceUnit): number | string {
+  return unit === "au" ? valueAu : scientificKilometers(valueAu * ASTRONOMICAL_UNIT_KM);
+}
+
+export function sublightDistanceInputToAu(value: number, unit: SublightDistanceUnit): number {
+  return unit === "au" ? value : value / ASTRONOMICAL_UNIT_KM;
+}
+
 export function formatCredits(value: number): string {
   const absolute = Math.abs(value);
   if (absolute >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M Cr`;

@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  formatSublightDistanceAu,
+  formatSublightDistanceKm,
+  sublightDistanceInputToAu,
+} from "../src/web/format.js";
 import { compactGameForStorage, loadStoredGame, persistGame, type StorageLike } from "../src/web/storage.js";
 import {
+  ASTRONOMICAL_UNIT_KM,
   buildJourneyOptions,
   buildFareCurveData,
   buildRouteServices,
+  missionProfileForStops,
   missionProfileForRoute,
   assignShipsToFleetConfiguration,
   buyShip,
@@ -83,7 +90,10 @@ import {
   updateFleetConfiguration,
   compareTechnicalStop,
   defaultBuildForShipType,
+  directionalEfficiencyAt,
+  fittedCurveValueAt,
   FTL_DRIVE_MODELS,
+  ftlKAtSpeed,
   hullVariantFromShipType,
   OPTIONAL_MODULES,
   resolveShipMission,
@@ -144,6 +154,30 @@ test("v0.7 驱动器逐型号读取速度-k曲线，曲率与超空间形成速�
   assert.equal(hyperspace.mode, "hyperspace");
   assert.ok(hyperspace.maximumSpeedLyPerDay > warp.maximumSpeedLyPerDay);
   assert.ok(Math.abs(warp.efficiencyCurve[1]!.kPerLightYear - hyperspace.efficiencyCurve[1]!.kPerLightYear) < 0.0002);
+});
+
+test("燃料效率计算使用精确经过数据点的平滑拟合曲线而非线性折线", () => {
+  const engine = SUBLIGHT_ENGINE_MODELS[0]!;
+  for (const point of engine.directionalEfficiencyCurve) {
+    assert.ok(Math.abs(directionalEfficiencyAt(engine, point.ratio) - point.efficiency) < 1e-12);
+  }
+  const firstEnginePoint = engine.directionalEfficiencyCurve[0]!;
+  const secondEnginePoint = engine.directionalEfficiencyCurve[1]!;
+  const engineMidpoint = (firstEnginePoint.ratio + secondEnginePoint.ratio) / 2;
+  const engineLinearMidpoint = (firstEnginePoint.efficiency + secondEnginePoint.efficiency) / 2;
+  assert.ok(Math.abs(directionalEfficiencyAt(engine, engineMidpoint) - engineLinearMidpoint) > 1e-5);
+
+  const drive = FTL_DRIVE_MODELS.find((candidate) => candidate.id === "horizon-hs4-economy")!;
+  for (const point of drive.efficiencyCurve) {
+    assert.ok(Math.abs(ftlKAtSpeed(drive, point.speedLyPerDay) - point.kPerLightYear) < 1e-12);
+  }
+  const firstDrivePoint = drive.efficiencyCurve[0]!;
+  const secondDrivePoint = drive.efficiencyCurve[1]!;
+  const driveMidpoint = (firstDrivePoint.speedLyPerDay + secondDrivePoint.speedLyPerDay) / 2;
+  const driveLinearMidpoint = (firstDrivePoint.kPerLightYear + secondDrivePoint.kPerLightYear) / 2;
+  assert.ok(Math.abs(ftlKAtSpeed(drive, driveMidpoint) - driveLinearMidpoint) > 1e-8);
+
+  assert.equal(fittedCurveValueAt([{ x: 1, y: 2 }], 10), 2);
 });
 
 test("v0.7 推力改变亚光速航时，效率曲线改变燃料且滑行阶段燃料为零", () => {
@@ -276,10 +310,18 @@ test("v0.7.1 现实航线任务剖面从开放航路与两端星港读取真实�
     { id: "b", systemId: "b", name: "B", population: 1, economy: 1, business: 1, tourism: 1, administration: 1, portLevel: 5, dailyCapacity: 100, fuelPrice: 2, serviceFee: 10, hyperspaceExitDistanceKm: 29_919_574.14 },
   ];
   const route: Route = { id: "profile", companyId: "player", name: "Profile", kind: "return", routingMode: "hyperspace", stops: ports.map((port) => ({ portId: port.id, stopType: "commercial", minimumStopHours: 1 })), shipTypeId: "meridian-liner", assignedShips: 1, pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1, premium: 1 } }, maintenanceAllowanceHours: 1, active: true };
-  const profile = missionProfileForRoute(route, ports, [{ id: "a-b", fromPortId: "a", toPortId: "b", mode: "hyperspace", distance: 42, hazard: 0, timeModifier: 1, fuelModifier: 1, isOpen: true }], "hyperspace");
+  const legs: WorldLeg[] = [{ id: "a-b", fromPortId: "a", toPortId: "b", mode: "hyperspace", distance: 42, hazard: 0, timeModifier: 1, fuelModifier: 1, isOpen: true }];
+  const profile = missionProfileForRoute(route, ports, legs, "hyperspace");
+  const plannedProfile = missionProfileForStops(["a", "b"], ports, legs, "hyperspace");
   assert.equal(profile.interstellarDistanceLightYears, 42);
   assert.ok(Math.abs(profile.departureSublightDistanceAu - 0.1) < 1e-9);
   assert.ok(Math.abs(profile.arrivalSublightDistanceAu - 0.2) < 1e-9);
+  assert.deepEqual(plannedProfile, {
+    mode: "hyperspace",
+    departureSublightDistanceAu: profile.departureSublightDistanceAu,
+    interstellarDistanceLightYears: profile.interstellarDistanceLightYears,
+    arrivalSublightDistanceAu: profile.arrivalSublightDistanceAu,
+  });
 });
 
 test("v0.7.1 只能出售未被任何航线占用或预定的舰船", () => {
@@ -1920,6 +1962,21 @@ test("v0.6 实体空间采用加速滑行减速，比冲决定燃料消耗且目
   assert.ok(transit.peakSpeedKmPerSecond <= ship.maximumSublightSpeedKmPerSecond!);
   const heavier = estimateSublightTransit({ ...ship, structuralMassTonnes: ship.structuralMassTonnes * 2 }, distance, cabins, 20, 50, .8);
   assert.ok(heavier.fuelUnits > estimateSublightTransit(ship, distance, cabins, 20, 50, .8).fuelUnits);
+});
+
+test("星港跃出点距离以 0.15 AU 为生成均值并支持 AU 与科学计数法 km 显示", () => {
+  const systemIds = Array.from({ length: 2_000 }, (_, index) => `exit-distance-system-${index}`);
+  for (const mode of ["warp", "hyperspace"] as const) {
+    const averageAu = systemIds.reduce(
+      (sum, systemId) => sum + deterministicExitDistanceKm(systemId, mode) / ASTRONOMICAL_UNIT_KM,
+      0,
+    ) / systemIds.length;
+    assert.ok(Math.abs(averageAu - 0.15) < 0.005);
+  }
+  assert.equal(formatSublightDistanceKm(ASTRONOMICAL_UNIT_KM * 0.15, "au"), "0.150 AU");
+  assert.match(formatSublightDistanceKm(ASTRONOMICAL_UNIT_KM * 0.15, "km"), /^\d\.\d{3}e\d+ km$/);
+  assert.match(formatSublightDistanceAu(0.15, "km"), /^\d\.\d{3}e\d+ km$/);
+  assert.ok(Math.abs(sublightDistanceInputToAu(ASTRONOMICAL_UNIT_KM * 0.15, "km") - 0.15) < 1e-12);
 });
 
 test("v0.6 星际效率按船重与携带燃料质量计算，控制概率及赔付边界严格匹配规格", () => {

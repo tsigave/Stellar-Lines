@@ -6,11 +6,11 @@ import {
   PASSENGER_TYPE_SATISFACTION_WEIGHTS,
 } from "./parameters.js";
 import {
+  ASTRONOMICAL_UNIT_KM,
   deterministicExitDistanceKm,
   estimateSublightTransit,
 } from "./fuel.js";
 import {
-  ASTRONOMICAL_UNIT_KM,
   defaultBuildForShipType,
   hullVariantFromShipType,
   resolveShipMission,
@@ -38,12 +38,15 @@ export interface BuildRouteServicesOptions {
 
 export const MAX_INTERSTELLAR_SPEED_LY_PER_DAY = 10;
 
-export interface RouteMissionProfile {
-  routeId: string;
+export interface MissionProfileGeometry {
   mode: Extract<TravelMode, "warp" | "hyperspace">;
   departureSublightDistanceAu: number;
   interstellarDistanceLightYears: number;
   arrivalSublightDistanceAu: number;
+}
+
+export interface RouteMissionProfile extends MissionProfileGeometry {
+  routeId: string;
 }
 
 function shortestProfilePath(
@@ -90,6 +93,40 @@ function shortestProfilePath(
   return path;
 }
 
+/** Resolve a one-way physical profile from real starports and currently open paths. */
+export function missionProfileForStops(
+  stopPortIds: readonly string[],
+  ports: readonly Starport[],
+  worldLegs: readonly WorldLeg[],
+  mode: MissionProfileGeometry["mode"],
+): MissionProfileGeometry {
+  if (stopPortIds.length < 2) throw new Error("任务剖面至少需要两个停靠点");
+  const allLegs: WorldLeg[] = [];
+  for (let index = 0; index < stopPortIds.length - 1; index += 1) {
+    const fromPortId = stopPortIds[index]!;
+    const toPortId = stopPortIds[index + 1]!;
+    if (fromPortId === toPortId) throw new Error("相邻停靠点不能是同一星港");
+    const path = shortestProfilePath(fromPortId, toPortId, worldLegs, mode);
+    if (!path) throw new Error(`无法找到开放的${mode === "warp" ? "曲率" : "超空间"}路径`);
+    allLegs.push(...path);
+  }
+  const fromPort = ports.find((port) => port.id === stopPortIds[0]);
+  const toPort = ports.find((port) => port.id === stopPortIds.at(-1));
+  if (!fromPort || !toPort) throw new Error("航线停靠的星港不存在");
+  const departureKm = mode === "hyperspace"
+    ? fromPort.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(fromPort.systemId, mode)
+    : fromPort.warpExitDistanceKm ?? deterministicExitDistanceKm(fromPort.systemId, mode);
+  const arrivalKm = mode === "hyperspace"
+    ? toPort.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(toPort.systemId, mode)
+    : toPort.warpExitDistanceKm ?? deterministicExitDistanceKm(toPort.systemId, mode);
+  return {
+    mode,
+    departureSublightDistanceAu: departureKm / ASTRONOMICAL_UNIT_KM,
+    interstellarDistanceLightYears: allLegs.filter((leg) => leg.mode === mode).reduce((sum, leg) => sum + leg.distance, 0),
+    arrivalSublightDistanceAu: arrivalKm / ASTRONOMICAL_UNIT_KM,
+  };
+}
+
 /** Resolve the one-way physical profile represented by an existing route. */
 export function missionProfileForRoute(
   route: Route,
@@ -100,30 +137,9 @@ export function missionProfileForRoute(
   if (route.routingMode && route.routingMode !== mode) {
     throw new Error(`航线使用${route.routingMode === "warp" ? "曲率" : "超空间"}航行，与当前驱动器不兼容`);
   }
-  if (route.stops.length < 2) throw new Error("航线至少需要两个停靠点");
-  const allLegs: WorldLeg[] = [];
-  for (let index = 0; index < route.stops.length - 1; index += 1) {
-    const from = route.stops[index]!;
-    const to = route.stops[index + 1]!;
-    const path = shortestProfilePath(from.portId, to.portId, worldLegs, mode);
-    if (!path) throw new Error(`无法为航线 ${route.name} 找到开放的${mode === "warp" ? "曲率" : "超空间"}路径`);
-    allLegs.push(...path);
-  }
-  const fromPort = ports.find((port) => port.id === route.stops[0]!.portId);
-  const toPort = ports.find((port) => port.id === route.stops.at(-1)!.portId);
-  if (!fromPort || !toPort) throw new Error("航线停靠的星港不存在");
-  const departureKm = mode === "hyperspace"
-    ? fromPort.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(fromPort.systemId, mode)
-    : fromPort.warpExitDistanceKm ?? deterministicExitDistanceKm(fromPort.systemId, mode);
-  const arrivalKm = mode === "hyperspace"
-    ? toPort.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(toPort.systemId, mode)
-    : toPort.warpExitDistanceKm ?? deterministicExitDistanceKm(toPort.systemId, mode);
   return {
     routeId: route.id,
-    mode,
-    departureSublightDistanceAu: departureKm / ASTRONOMICAL_UNIT_KM,
-    interstellarDistanceLightYears: allLegs.filter((leg) => leg.mode === mode).reduce((sum, leg) => sum + leg.distance, 0),
-    arrivalSublightDistanceAu: arrivalKm / ASTRONOMICAL_UNIT_KM,
+    ...missionProfileForStops(route.stops.map((stop) => stop.portId), ports, worldLegs, mode),
   };
 }
 

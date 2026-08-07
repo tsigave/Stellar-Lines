@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CABIN_SPACE_PER_SEAT,
   cabinSpaceUsed,
@@ -6,10 +6,12 @@ import {
   currentFuelPrice,
   defaultBuildForShipType,
   directionalEfficiencyAt,
+  fitShapePreservingCurve,
   FTL_DRIVE_MODELS,
   ftlKAtSpeed,
   fleetConfigurationForShip,
   fleetFixedMaintenanceCost,
+  missionProfileForStops,
   missionProfileForRoute,
   quoteShipPurchaseAgreement,
   hullVariantFromShipType,
@@ -31,12 +33,19 @@ import {
   type ShipBuildConfiguration,
   type ShipType,
 } from "../../index.js";
-import { formatCredits } from "../format.js";
+import {
+  formatCredits,
+  formatSublightDistanceAu,
+  sublightDistanceInputToAu,
+  sublightDistanceInputValue,
+  type SublightDistanceUnit,
+} from "../format.js";
 
 interface FleetPanelProps {
   game: GameState;
   galaxy: GeneratedGalaxy;
   shipTypes: readonly ShipType[];
+  sublightDistanceUnit: SublightDistanceUnit;
   onPlacePurchaseAgreement: (lines: readonly ShipPurchaseLineInput[]) => void;
   onCreateConfiguration: (
     shipTypeId: string,
@@ -229,6 +238,7 @@ function OwnedShipCard({ ship, type, game, onMaintainShip, onReplaceShip, onSell
 }
 
 function EfficiencyCurveChart({
+  id,
   title,
   xLabel,
   yLabel,
@@ -237,8 +247,11 @@ function EfficiencyCurveChart({
   currentY,
   xFormatter,
   yFormatter,
+  onCurrentXChange,
+  keyboardStep,
   lowerIsBetter = false,
 }: {
+  id: string;
   title: string;
   xLabel: string;
   yLabel: string;
@@ -247,9 +260,13 @@ function EfficiencyCurveChart({
   currentY: number;
   xFormatter: (value: number) => string;
   yFormatter: (value: number) => string;
+  onCurrentXChange: (value: number) => void;
+  keyboardStep: number;
   lowerIsBetter?: boolean;
 }) {
   const sorted = [...points].sort((left, right) => left.x - right.x);
+  const fitted = fitShapePreservingCurve(sorted);
+  const svgRef = useRef<SVGSVGElement>(null);
   const width = 560;
   const height = 220;
   const plot = { left: 58, right: 18, top: 18, bottom: 44 };
@@ -264,21 +281,65 @@ function EfficiencyCurveChart({
   const plotHeight = height - plot.top - plot.bottom;
   const scaleX = (value: number) => plot.left + (value - xMin) / Math.max(1e-9, xMax - xMin) * plotWidth;
   const scaleY = (value: number) => plot.top + (yMax - value) / Math.max(1e-9, yMax - yMin) * plotHeight;
-  const polyline = sorted.map((point) => `${scaleX(point.x)},${scaleY(point.y)}`).join(" ");
+  const curvePath = fitted.reduce((path, point, index) => {
+    if (index === 0) return `M ${scaleX(point.x)} ${scaleY(point.y)}`;
+    const previous = fitted[index - 1]!;
+    const interval = point.x - previous.x;
+    return `${path} C ${scaleX(previous.x + interval / 3)} ${scaleY(previous.y + previous.slope * interval / 3)}, ${scaleX(point.x - interval / 3)} ${scaleY(point.y - point.slope * interval / 3)}, ${scaleX(point.x)} ${scaleY(point.y)}`;
+  }, "");
   const xTicks = Array.from({ length: 5 }, (_, index) => xMin + (xMax - xMin) * index / 4);
   const yTicks = Array.from({ length: 4 }, (_, index) => yMax - (yMax - yMin) * index / 3);
   const markerX = scaleX(Math.max(xMin, Math.min(xMax, currentX)));
   const markerY = scaleY(currentY);
+  const updateFromClientX = (clientX: number) => {
+    const bounds = svgRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const viewBoxX = (clientX - bounds.left) / bounds.width * width;
+    const rawX = xMin + (viewBoxX - plot.left) / plotWidth * (xMax - xMin);
+    const clampedX = Math.max(xMin, Math.min(xMax, rawX));
+    const nearestPoint = sorted.reduce((nearest, point) =>
+      Math.abs(scaleX(point.x) - viewBoxX) < Math.abs(scaleX(nearest.x) - viewBoxX) ? point : nearest
+    , sorted[0]!);
+    onCurrentXChange(Math.abs(scaleX(nearestPoint.x) - viewBoxX) <= 9 ? nearestPoint.x : Number(clampedX.toFixed(3)));
+  };
   return (
-    <section className="efficiency-curve-panel" aria-label={title}>
+    <section id={id} className="efficiency-curve-panel" aria-label={title}>
       <div className="efficiency-curve-heading"><div><strong>{title}</strong><small>{lowerIsBetter ? "燃料系数越低越省" : "定向效率越高越省"}</small></div><span>当前：{xFormatter(currentX)} · {yFormatter(currentY)}</span></div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title}，横轴${xLabel}，纵轴${yLabel}`}>
+      <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title}，横轴${xLabel}，纵轴${yLabel}`}>
         {yTicks.map((tick) => <g key={`y-${tick}`}><line x1={plot.left} x2={width - plot.right} y1={scaleY(tick)} y2={scaleY(tick)} /><text x={plot.left - 8} y={scaleY(tick) + 4} textAnchor="end">{yFormatter(tick)}</text></g>)}
         {xTicks.map((tick) => <g key={`x-${tick}`}><line x1={scaleX(tick)} x2={scaleX(tick)} y1={plot.top} y2={height - plot.bottom} /><text x={scaleX(tick)} y={height - 24} textAnchor="middle">{xFormatter(tick)}</text></g>)}
-        <polyline points={polyline} />
+        <path className="curve-line" d={curvePath} />
         {sorted.map((point) => <circle className="curve-point" key={`${point.x}-${point.y}`} cx={scaleX(point.x)} cy={scaleY(point.y)} r="3.5"><title>{xFormatter(point.x)} · {yFormatter(point.y)}</title></circle>)}
         <line className="current-guide" x1={markerX} x2={markerX} y1={plot.top} y2={height - plot.bottom} />
         <circle className="current-point" cx={markerX} cy={markerY} r="5"><title>当前：{xFormatter(currentX)} · {yFormatter(currentY)}</title></circle>
+        <rect
+          className="curve-drag-target"
+          x={plot.left}
+          y={plot.top}
+          width={plotWidth}
+          height={plotHeight}
+          tabIndex={0}
+          role="slider"
+          aria-label={`${title}当前参数`}
+          aria-valuemin={xMin}
+          aria-valuemax={xMax}
+          aria-valuenow={currentX}
+          aria-valuetext={`${xFormatter(currentX)}，${yFormatter(currentY)}`}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            updateFromClientX(event.clientX);
+          }}
+          onPointerMove={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) updateFromClientX(event.clientX);
+          }}
+          onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            const direction = event.key === "ArrowLeft" ? -1 : 1;
+            onCurrentXChange(Math.max(xMin, Math.min(xMax, currentX + keyboardStep * direction)));
+          }}
+        />
         <text className="axis-label x-axis-label" x={plot.left + plotWidth / 2} y={height - 4} textAnchor="middle">{xLabel}</text>
         <text className="axis-label y-axis-label" x="13" y={plot.top + plotHeight / 2} textAnchor="middle" transform={`rotate(-90 13 ${plot.top + plotHeight / 2})`}>{yLabel}</text>
       </svg>
@@ -290,6 +351,7 @@ export function FleetPanel({
   game,
   galaxy,
   shipTypes,
+  sublightDistanceUnit,
   onPlacePurchaseAgreement,
   onCreateConfiguration,
   onUpdateConfiguration,
@@ -320,7 +382,11 @@ export function FleetPanel({
   const [selectedCatalogTypeId, setSelectedCatalogTypeId] = useState(() => shipTypes[0]?.id ?? "");
   const selectedCatalogType = shipTypes.find((type) => type.id === selectedCatalogTypeId) ?? shipTypes[0];
   const [draftBuild, setDraftBuild] = useState<ShipBuildConfiguration>(() => defaultBuildForShipType(shipTypes[0]!));
-  const [missionProfileSource, setMissionProfileSource] = useState("virtual");
+  const [missionProfileSource, setMissionProfileSource] = useState("planned");
+  const [plannedOriginPortId, setPlannedOriginPortId] = useState(game.basePortId);
+  const [plannedDestinationPortId, setPlannedDestinationPortId] = useState(
+    () => galaxy.ports.find((port) => port.id !== game.basePortId)?.id ?? game.basePortId,
+  );
   const [virtualDepartureDistance, setVirtualDepartureDistance] = useState(0.15);
   const [virtualInterstellarDistance, setVirtualInterstellarDistance] = useState(12);
   const [virtualArrivalDistance, setVirtualArrivalDistance] = useState(0.15);
@@ -340,6 +406,10 @@ export function FleetPanel({
       setMissionPassengers((current) => Math.min(current, selectedCatalogType.seats));
     }
   }, [selectedCatalogType?.id]);
+  useEffect(() => {
+    setPlannedOriginPortId(game.basePortId);
+    setPlannedDestinationPortId(galaxy.ports.find((port) => port.id !== game.basePortId)?.id ?? game.basePortId);
+  }, [galaxy.ports, game.basePortId]);
   const selectedHull = selectedCatalogType ? hullVariantFromShipType(selectedCatalogType) : null;
   const selectedEngine = SUBLIGHT_ENGINE_MODELS.find((engine) => engine.id === draftBuild.sublightEngineModelId);
   const selectedDrive = FTL_DRIVE_MODELS.find((drive) => drive.id === draftBuild.ftlDriveModelId);
@@ -361,6 +431,22 @@ export function FleetPanel({
       },
       error: null as string | null,
     };
+    if (missionProfileSource === "planned") {
+      if (!selectedDrive) return { profile: null, error: "当前配置没有可用于规划航线的 FTL 驱动器" };
+      try {
+        return {
+          profile: missionProfileForStops(
+            [plannedOriginPortId, plannedDestinationPortId],
+            galaxy.ports,
+            galaxy.worldLegs,
+            selectedDrive.mode,
+          ),
+          error: null as string | null,
+        };
+      } catch (caught) {
+        return { profile: null, error: caught instanceof Error ? caught.message : "无法解析规划航线任务剖面" };
+      }
+    }
     const route = game.routes.find((candidate) => candidate.id === missionProfileSource);
     if (!route || !selectedDrive) return { profile: null, error: "当前配置没有可用于该航线的 FTL 驱动器" };
     try {
@@ -368,7 +454,7 @@ export function FleetPanel({
     } catch (caught) {
       return { profile: null, error: caught instanceof Error ? caught.message : "无法解析航线任务剖面" };
     }
-  }, [galaxy.ports, galaxy.worldLegs, game.routes, missionProfileSource, selectedDrive, virtualArrivalDistance, virtualDepartureDistance, virtualInterstellarDistance]);
+  }, [galaxy.ports, galaxy.worldLegs, game.routes, missionProfileSource, plannedDestinationPortId, plannedOriginPortId, selectedDrive, virtualArrivalDistance, virtualDepartureDistance, virtualInterstellarDistance]);
   const missionInput = selectedCatalogType && selectedHull && routeProfileResult.profile ? {
     build: { ...draftBuild, destinationReserveTonnes: missionReserve },
     hull: selectedHull,
@@ -505,31 +591,43 @@ export function FleetPanel({
               <div><dt>燃料舱 / 最大起飞质量</dt><dd>{resolvedBuild.fuelCapacityTonnes.toFixed(1)} / {selectedHull.maximumTakeoffMassTonnes.toFixed(1)} t</dd></div>
               <div><dt>当前最高 FTL 速率</dt><dd>{selectedDrive ? `${selectedDrive.maximumSpeedLyPerDay.toFixed(1)} ly/d` : "未安装"}</dd></div>
               <div><dt>最高亚光速加速度（空载）</dt><dd>{emptyMaximumAcceleration.toFixed(3)} m/s²</dd></div>
-              <div><dt>当前亚光速燃料效率</dt><dd className="efficiency-data"><span>{selectedEngine ? `${(currentSublightEfficiency * 100).toFixed(1)}% @ ${(missionThrustRatio * 100).toFixed(0)}% 推力 · 经济点 ${(economySublightEfficiency * 100).toFixed(1)}%` : "未安装"}</span><button type="button" disabled={!selectedEngine} aria-expanded={visibleEfficiencyCurve === "sublight"} aria-controls="sublight-efficiency-curve" onClick={() => setVisibleEfficiencyCurve((current) => current === "sublight" ? null : "sublight")}>{visibleEfficiencyCurve === "sublight" ? "收起曲线" : "查看曲线"}</button></dd></div>
-              <div><dt>当前 FTL 燃料效率</dt><dd className="efficiency-data"><span>{selectedDrive ? `${(currentFtlK * 1_000).toFixed(3)}‰/ly @ ${missionSpeed.toFixed(1)} ly/d · 最优 ${(optimalFtlK * 1_000).toFixed(3)}‰/ly` : "未安装"}</span><button type="button" disabled={!selectedDrive} aria-expanded={visibleEfficiencyCurve === "ftl"} aria-controls="ftl-efficiency-curve" onClick={() => setVisibleEfficiencyCurve((current) => current === "ftl" ? null : "ftl")}>{visibleEfficiencyCurve === "ftl" ? "收起曲线" : "查看曲线"}</button></dd></div>
+              <div className={`efficiency-accordion-item${visibleEfficiencyCurve === "sublight" ? " expanded" : ""}`}>
+                <dt className="efficiency-label"><span>当前亚光速燃料效率</span><button type="button" disabled={!selectedEngine} title={visibleEfficiencyCurve === "sublight" ? "收起亚光速燃料效率曲线" : "展开亚光速燃料效率曲线"} aria-label={visibleEfficiencyCurve === "sublight" ? "收起亚光速燃料效率曲线" : "展开亚光速燃料效率曲线"} aria-expanded={visibleEfficiencyCurve === "sublight"} aria-controls="sublight-efficiency-curve" onClick={() => setVisibleEfficiencyCurve((current) => current === "sublight" ? null : "sublight")}><i aria-hidden="true" /></button></dt>
+                <dd className="efficiency-data"><span>{selectedEngine ? `${(currentSublightEfficiency * 100).toFixed(1)}% @ ${(missionThrustRatio * 100).toFixed(1)}% 推力 · 经济点 ${(economySublightEfficiency * 100).toFixed(1)}%` : "未安装"}</span></dd>
+                {visibleEfficiencyCurve === "sublight" && selectedEngine && <EfficiencyCurveChart
+                  id="sublight-efficiency-curve"
+                  title={`${selectedEngine.manufacturer} ${selectedEngine.model} · 效率—推力曲线`}
+                  xLabel="推力比例"
+                  yLabel="定向效率"
+                  points={selectedEngine.directionalEfficiencyCurve.map((point) => ({ x: point.ratio * 100, y: point.efficiency * 100 }))}
+                  currentX={missionThrustRatio * 100}
+                  currentY={currentSublightEfficiency * 100}
+                  xFormatter={(value) => `${value.toFixed(1)}%`}
+                  yFormatter={(value) => `${value.toFixed(1)}%`}
+                  onCurrentXChange={(value) => setMissionThrustRatio(value / 100)}
+                  keyboardStep={1}
+                />}
+              </div>
+              <div className={`efficiency-accordion-item${visibleEfficiencyCurve === "ftl" ? " expanded" : ""}`}>
+                <dt className="efficiency-label"><span>当前 FTL 燃料效率</span><button type="button" disabled={!selectedDrive} title={visibleEfficiencyCurve === "ftl" ? "收起 FTL 燃料效率曲线" : "展开 FTL 燃料效率曲线"} aria-label={visibleEfficiencyCurve === "ftl" ? "收起 FTL 燃料效率曲线" : "展开 FTL 燃料效率曲线"} aria-expanded={visibleEfficiencyCurve === "ftl"} aria-controls="ftl-efficiency-curve" onClick={() => setVisibleEfficiencyCurve((current) => current === "ftl" ? null : "ftl")}><i aria-hidden="true" /></button></dt>
+                <dd className="efficiency-data"><span>{selectedDrive ? `${(currentFtlK * 1_000).toFixed(3)}‰/ly @ ${missionSpeed.toFixed(3)} ly/d · 最优 ${(optimalFtlK * 1_000).toFixed(3)}‰/ly` : "未安装"}</span></dd>
+                {visibleEfficiencyCurve === "ftl" && selectedDrive && <EfficiencyCurveChart
+                  id="ftl-efficiency-curve"
+                  title={`${selectedDrive.manufacturer} ${selectedDrive.model} · 燃料效率—速度曲线`}
+                  xLabel="FTL 速度"
+                  yLabel="燃料系数"
+                  points={selectedDrive.efficiencyCurve.map((point) => ({ x: point.speedLyPerDay, y: point.kPerLightYear * 1_000 }))}
+                  currentX={missionSpeed}
+                  currentY={currentFtlK * 1_000}
+                  xFormatter={(value) => `${value.toFixed(3)} ly/d`}
+                  yFormatter={(value) => `${value.toFixed(3)}‰/ly`}
+                  onCurrentXChange={setMissionSpeed}
+                  keyboardStep={0.1}
+                  lowerIsBetter
+                />}
+              </div>
               <div><dt>推进器数量</dt><dd>亚光速 {selectedEngineCount} 台（系列固定）· FTL {selectedHull.ftlDriveSlots} 套 · 模块 {selectedHull.optionalModuleSlots}</dd></div>
             </dl>
-            {visibleEfficiencyCurve === "sublight" && selectedEngine && <div id="sublight-efficiency-curve"><EfficiencyCurveChart
-              title={`${selectedEngine.manufacturer} ${selectedEngine.model} · 效率—推力曲线`}
-              xLabel="推力比例"
-              yLabel="定向效率"
-              points={selectedEngine.directionalEfficiencyCurve.map((point) => ({ x: point.ratio * 100, y: point.efficiency * 100 }))}
-              currentX={missionThrustRatio * 100}
-              currentY={currentSublightEfficiency * 100}
-              xFormatter={(value) => `${value.toFixed(0)}%`}
-              yFormatter={(value) => `${value.toFixed(1)}%`}
-            /></div>}
-            {visibleEfficiencyCurve === "ftl" && selectedDrive && <div id="ftl-efficiency-curve"><EfficiencyCurveChart
-              title={`${selectedDrive.manufacturer} ${selectedDrive.model} · 燃料效率—速度曲线`}
-              xLabel="FTL 速度"
-              yLabel="燃料系数"
-              points={selectedDrive.efficiencyCurve.map((point) => ({ x: point.speedLyPerDay, y: point.kPerLightYear * 1_000 }))}
-              currentX={missionSpeed}
-              currentY={currentFtlK * 1_000}
-              xFormatter={(value) => `${value.toFixed(1)} ly/d`}
-              yFormatter={(value) => `${value.toFixed(3)}‰/ly`}
-              lowerIsBetter
-            /></div>}
             <label>亚光速引擎<select value={draftBuild.sublightEngineModelId} onChange={(event) => { const id = event.target.value; setDraftBuild((current) => ({ ...current, sublightEngineModelId: id })); const engine = SUBLIGHT_ENGINE_MODELS.find((candidate) => candidate.id === id); if (engine) setMissionThrustRatio(engine.economyThrustRatio); }}>{SUBLIGHT_ENGINE_MODELS.filter((engine) => engine.installationClass <= selectedHull.installationClass).map((engine) => <option key={engine.id} value={engine.id}>{engine.manufacturer} {engine.model} · 固定 {selectedEngineCount} 台 · 单机 {engine.massTonnes} t / {engine.maximumThrustMN.toFixed(2)} MN · 总推力 {(engine.maximumThrustMN * selectedEngineCount).toFixed(1)} MN · 经济效率 {(directionalEfficiencyAt(engine, engine.economyThrustRatio) * 100).toFixed(1)}%</option>)}</select></label>
             <label>FTL 驱动<select value={draftBuild.ftlDriveModelId ?? ""} onChange={(event) => { const id = event.target.value; setDraftBuild((current) => ({ ...current, ftlDriveModelId: id })); const drive = FTL_DRIVE_MODELS.find((candidate) => candidate.id === id); if (drive) setMissionSpeed(drive.maximumSpeedLyPerDay); }}>{FTL_DRIVE_MODELS.filter((drive) => drive.installationClass <= selectedHull.installationClass && selectedCatalogType.supportedModes.includes(drive.mode)).map((drive) => <option key={drive.id} value={drive.id}>{drive.mode === "warp" ? "曲率" : "超空间"} · {drive.manufacturer} {drive.model} · {drive.massTonnes} t · 最优 {(ftlKAtSpeed(drive, drive.optimalSpeedLyPerDay) * 1_000).toFixed(3)}‰/ly</option>)}</select></label>
             <div className="module-picker"><strong>辅助模块（{draftBuild.optionalModuleIds.length}/{selectedHull.optionalModuleSlots}）</strong>{OPTIONAL_MODULES.filter((module) => module.installationClass <= selectedHull.installationClass).map((module) => <label key={module.id}><input type="checkbox" checked={draftBuild.optionalModuleIds.includes(module.id)} disabled={!draftBuild.optionalModuleIds.includes(module.id) && draftBuild.optionalModuleIds.length >= selectedHull.optionalModuleSlots} onChange={() => setDraftBuild((current) => ({ ...current, optionalModuleIds: current.optionalModuleIds.includes(module.id) ? current.optionalModuleIds.filter((id) => id !== module.id) : [...current.optionalModuleIds, module.id] }))}/><span>{module.name}</span><small>{module.massTonnes} t · {formatCredits(module.price)}</small></label>)}</div>
@@ -537,10 +635,15 @@ export function FleetPanel({
           </article>
           <article className="shipyard-builder-column mission-column">
             <span className="eyebrow">3 · MISSION</span><h3>任务剖面分析</h3>
-            <label className="mission-profile-source">任务来源<select value={missionProfileSource} onChange={(event) => setMissionProfileSource(event.target.value)}><option value="virtual">虚拟航线（手动设定）</option>{game.routes.map((route) => <option key={route.id} value={route.id}>现实航线 · {route.name}</option>)}</select></label>
-            {missionProfileSource === "virtual" ? <div className="mission-inputs profile-distances"><label>离港实体距离<input type="number" min="0.00001" max="10" step="0.01" value={virtualDepartureDistance} onChange={(event) => setVirtualDepartureDistance(Math.max(0.00001, Number(event.target.value) || 0.00001))}/><small>AU</small></label><label>{selectedDrive?.mode === "warp" ? "曲率航行距离" : "超空间航行距离"}<input type="number" min="0" max="500" value={virtualInterstellarDistance} onChange={(event) => setVirtualInterstellarDistance(Math.max(0, Number(event.target.value) || 0))}/><small>ly</small></label><label>进港实体距离<input type="number" min="0.00001" max="10" step="0.01" value={virtualArrivalDistance} onChange={(event) => setVirtualArrivalDistance(Math.max(0.00001, Number(event.target.value) || 0.00001))}/><small>AU</small></label></div> : routeProfileResult.profile ? <div className="route-profile-summary"><span>离港 {routeProfileResult.profile.departureSublightDistanceAu.toFixed(3)} AU</span><strong>{routeProfileResult.profile.interstellarDistanceLightYears.toFixed(1)} ly</strong><span>进港 {routeProfileResult.profile.arrivalSublightDistanceAu.toFixed(3)} AU</span></div> : <p className="mission-profile-error">{routeProfileResult.error}</p>}
+            <label className="mission-profile-source">任务来源<select value={missionProfileSource} onChange={(event) => setMissionProfileSource(event.target.value)}><option value="planned">规划航线（尚未开通）</option>{game.routes.map((route) => <option key={route.id} value={route.id}>已开通航线 · {route.name}</option>)}<option value="virtual">自定义距离</option></select></label>
+            {missionProfileSource === "planned" && <div className="mission-inputs planned-route-inputs">
+              <label>出发星港<select value={plannedOriginPortId} onChange={(event) => { const nextOrigin = event.target.value; setPlannedOriginPortId(nextOrigin); if (plannedDestinationPortId === nextOrigin) setPlannedDestinationPortId(galaxy.ports.find((port) => port.id !== nextOrigin)?.id ?? nextOrigin); }}>{galaxy.ports.map((port) => <option key={port.id} value={port.id}>{port.id === game.basePortId ? `${port.name}（公司基地）` : port.name}</option>)}</select></label>
+              <label>目的星港<select value={plannedDestinationPortId} onChange={(event) => setPlannedDestinationPortId(event.target.value)}>{galaxy.ports.filter((port) => port.id !== plannedOriginPortId).map((port) => <option key={port.id} value={port.id}>{port.id === game.basePortId ? `${port.name}（公司基地）` : port.name}</option>)}</select></label>
+            </div>}
+            {missionProfileSource === "virtual" && <div className="mission-inputs profile-distances"><label>离港实体距离<input type="number" min={sublightDistanceInputValue(0.00001, sublightDistanceUnit)} max={sublightDistanceInputValue(10, sublightDistanceUnit)} step={sublightDistanceUnit === "au" ? 0.01 : 100_000} value={sublightDistanceInputValue(virtualDepartureDistance, sublightDistanceUnit)} onChange={(event) => setVirtualDepartureDistance(Math.max(0.00001, sublightDistanceInputToAu(Number(event.target.value) || 0, sublightDistanceUnit)))}/><small>{sublightDistanceUnit === "au" ? "AU" : "km"}</small></label><label>{selectedDrive?.mode === "warp" ? "曲率航行距离" : "超空间航行距离"}<input type="number" min="0" max="500" value={virtualInterstellarDistance} onChange={(event) => setVirtualInterstellarDistance(Math.max(0, Number(event.target.value) || 0))}/><small>ly</small></label><label>进港实体距离<input type="number" min={sublightDistanceInputValue(0.00001, sublightDistanceUnit)} max={sublightDistanceInputValue(10, sublightDistanceUnit)} step={sublightDistanceUnit === "au" ? 0.01 : 100_000} value={sublightDistanceInputValue(virtualArrivalDistance, sublightDistanceUnit)} onChange={(event) => setVirtualArrivalDistance(Math.max(0.00001, sublightDistanceInputToAu(Number(event.target.value) || 0, sublightDistanceUnit)))}/><small>{sublightDistanceUnit === "au" ? "AU" : "km"}</small></label></div>}
+            {missionProfileSource !== "virtual" && (routeProfileResult.profile ? <div className="route-profile-summary"><span>离港 {formatSublightDistanceAu(routeProfileResult.profile.departureSublightDistanceAu, sublightDistanceUnit)}</span><strong>{routeProfileResult.profile.interstellarDistanceLightYears.toFixed(1)} ly</strong><span>进港 {formatSublightDistanceAu(routeProfileResult.profile.arrivalSublightDistanceAu, sublightDistanceUnit)}</span></div> : <p className="mission-profile-error">{routeProfileResult.error}</p>)}
             <div className="mission-inputs"><label>旅客<input type="number" min="0" max={selectedCatalogType.seats} value={missionPassengers} onChange={(event) => setMissionPassengers(Math.max(0, Math.min(selectedCatalogType.seats, Number(event.target.value) || 0)))}/><small>人</small></label><label>抵达储备<input type="number" min="0" value={missionReserve} onChange={(event) => setMissionReserve(Math.max(0, Number(event.target.value) || 0))}/><small>t</small></label>{selectedDrive && <label>FTL 速度<input type="number" min={selectedDrive.minimumSpeedLyPerDay} max={selectedDrive.maximumSpeedLyPerDay} step="0.1" value={missionSpeed} onChange={(event) => setMissionSpeed(Math.max(selectedDrive.minimumSpeedLyPerDay, Math.min(selectedDrive.maximumSpeedLyPerDay, Number(event.target.value) || selectedDrive.minimumSpeedLyPerDay)))}/><small>ly/d</small></label>}{selectedEngine && <label>推力<input type="number" min="0.5" max="1" step="0.01" value={missionThrustRatio} onChange={(event) => setMissionThrustRatio(Math.max(.5, Math.min(1, Number(event.target.value) || .5)))}/><small>比例</small></label>}</div>
-            {resolvedMission ? <><div className="mission-verdict"><strong className={resolvedMission.feasible ? "positive-text" : "negative-text"}>{resolvedMission.feasible ? "任务可行" : "任务不可行"}</strong><span>起飞 {resolvedMission.takeoffMassTonnes.toFixed(1)} t · 燃料 {resolvedMission.initialFuelTonnes.toFixed(2)} t · 油箱 {(resolvedMission.fuelCapacityUtilization * 100).toFixed(1)}%</span><span>直达航程 {resolvedMission.maximumDirectRangeLightYears.toFixed(1)} ly · 总航时 {(resolvedMission.totalHours / 24).toFixed(2)} 日</span>{resolvedMission.infeasibleReasons.map((reason) => <small key={reason}>{reason}</small>)}</div><div className="mission-phases">{resolvedMission.phases.map((phase) => <div key={phase.kind}><span>{phase.kind === "departure" ? "离港" : phase.kind === "arrival" ? "进港" : "星际"}</span><strong>{phase.fuelBurnTonnes.toFixed(2)} t</strong><small>{phase.distance.toFixed(3)} {phase.kind === "interstellar" ? "ly" : "AU"} · {phase.hours.toFixed(2)} h</small></div>)}</div><div className="mission-costs"><strong>单班完整成本</strong><span>燃料 {formatCredits(resolvedMission.totalFuelBurnTonnes * currentFuelPrice(game))}</span><span>飞时维护 {formatCredits(resolvedMission.maintenancePerFlightHour * resolvedMission.totalHours)}</span><span>人员 {formatCredits(resolvedMission.crewRequired * resolvedMission.totalHours * 3.5)}</span><span>折旧 {formatCredits(resolvedMission.purchasePrice / (8 * 360) * resolvedMission.totalHours / 24)}</span></div>{technicalStopComparison && <div className="technical-stop-comparison"><strong>直飞 / 中途技术补给</strong><span>直飞：{technicalStopComparison.direct.feasible ? `${technicalStopComparison.direct.totalFuelBurnTonnes.toFixed(1)} t · ${(technicalStopComparison.direct.totalHours / 24).toFixed(2)} 日` : "不可行"}</span><span>技术停靠：{technicalStopComparison.withTechnicalStop.feasible ? `${technicalStopComparison.withTechnicalStop.totalFuelBurnTonnes.toFixed(1)} t · ${(technicalStopComparison.withTechnicalStop.totalHours / 24).toFixed(2)} 日 · 港口 ${formatCredits(technicalStopComparison.withTechnicalStop.addedPortCost)}` : "不可行"}</span></div>}</> : <div className="mission-verdict"><strong className="negative-text">无法分析任务</strong><small>{routeProfileResult.error}</small></div>}
+            {resolvedMission ? <><div className="mission-verdict"><strong className={resolvedMission.feasible ? "positive-text" : "negative-text"}>{resolvedMission.feasible ? "任务可行" : "任务不可行"}</strong><span>起飞 {resolvedMission.takeoffMassTonnes.toFixed(1)} t · 燃料 {resolvedMission.initialFuelTonnes.toFixed(2)} t · 油箱 {(resolvedMission.fuelCapacityUtilization * 100).toFixed(1)}%</span><span>直达航程 {resolvedMission.maximumDirectRangeLightYears.toFixed(1)} ly · 总航时 {(resolvedMission.totalHours / 24).toFixed(2)} 日</span>{resolvedMission.infeasibleReasons.map((reason) => <small key={reason}>{reason}</small>)}</div><div className="mission-phases">{resolvedMission.phases.map((phase) => <div key={phase.kind}><span>{phase.kind === "departure" ? "离港" : phase.kind === "arrival" ? "进港" : "星际"}</span><strong>{phase.fuelBurnTonnes.toFixed(2)} t</strong><small>{phase.kind === "interstellar" ? `${phase.distance.toFixed(3)} ly` : formatSublightDistanceAu(phase.distance, sublightDistanceUnit)} · {phase.hours.toFixed(2)} h</small></div>)}</div><div className="mission-costs"><strong>单班完整成本</strong><span>燃料 {formatCredits(resolvedMission.totalFuelBurnTonnes * currentFuelPrice(game))}</span><span>飞时维护 {formatCredits(resolvedMission.maintenancePerFlightHour * resolvedMission.totalHours)}</span><span>人员 {formatCredits(resolvedMission.crewRequired * resolvedMission.totalHours * 3.5)}</span><span>折旧 {formatCredits(resolvedMission.purchasePrice / (8 * 360) * resolvedMission.totalHours / 24)}</span></div>{technicalStopComparison && <div className="technical-stop-comparison"><strong>直飞 / 中途技术补给</strong><span>直飞：{technicalStopComparison.direct.feasible ? `${technicalStopComparison.direct.totalFuelBurnTonnes.toFixed(1)} t · ${(technicalStopComparison.direct.totalHours / 24).toFixed(2)} 日` : "不可行"}</span><span>技术停靠：{technicalStopComparison.withTechnicalStop.feasible ? `${technicalStopComparison.withTechnicalStop.totalFuelBurnTonnes.toFixed(1)} t · ${(technicalStopComparison.withTechnicalStop.totalHours / 24).toFixed(2)} 日 · 港口 ${formatCredits(technicalStopComparison.withTechnicalStop.addedPortCost)}` : "不可行"}</span></div>}</> : <div className="mission-verdict"><strong className="negative-text">无法分析任务</strong><small>{routeProfileResult.error}</small></div>}
           </article>
         </div>}
         {purchaseQuote && <section className="purchase-agreement-cart">

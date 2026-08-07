@@ -55,12 +55,14 @@ import { SchedulePanel } from "./components/SchedulePanel.js";
 import { StarportFlightsPanel } from "./components/StarportFlightsPanel.js";
 import { TimeControls, type GameSpeed } from "./components/TimeControls.js";
 import { TopMetrics } from "./components/TopMetrics.js";
+import type { SublightDistanceUnit } from "./format.js";
 import { loadStoredGame, persistGame } from "./storage.js";
 
 const SAVE_KEY = "stellar-lines-v0.7-save";
 const LEGACY_SAVE_KEYS = ["stellar-lines-v0-save", "stellar-lines-v0.6-save", "stellar-lines-v0.6.1-save"] as const;
 const UI_THEME_KEY = "stellar-lines-ui-theme";
 const INSPECTOR_WIDTH_KEY = "stellar-lines-inspector-width";
+const SUBLIGHT_DISTANCE_UNIT_KEY = "stellar-lines-sublight-distance-unit";
 type UiTheme = "deep-space" | "aurora" | "command-deck";
 
 function storedUiTheme(): UiTheme {
@@ -81,6 +83,15 @@ function storedInspectorWidth(): number {
     // UI preferences are optional and must not block the game.
   }
   return 440;
+}
+
+function storedSublightDistanceUnit(): SublightDistanceUnit {
+  try {
+    if (window.localStorage.getItem(SUBLIGHT_DISTANCE_UNIT_KEY) === "km") return "km";
+  } catch {
+    // UI preferences are optional and must not block the game.
+  }
+  return "au";
 }
 
 interface GameSession {
@@ -139,6 +150,7 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [uiTheme, setUiTheme] = useState<UiTheme>(storedUiTheme);
   const [inspectorWidth, setInspectorWidth] = useState(storedInspectorWidth);
+  const [sublightDistanceUnit, setSublightDistanceUnit] = useState<SublightDistanceUnit>(storedSublightDistanceUnit);
   const [activeView, setActiveView] = useState<"company" | "map" | "fleet" | "fuel" | "schedule" | "route">("map");
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(session.game.routes[0]?.id ?? null);
   const { generated, game } = session;
@@ -151,6 +163,10 @@ export function App() {
   useEffect(() => {
     try { window.localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorWidth)); } catch { /* optional preference */ }
   }, [inspectorWidth]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(SUBLIGHT_DISTANCE_UNIT_KEY, sublightDistanceUnit); } catch { /* optional preference */ }
+  }, [sublightDistanceUnit]);
 
   const newGamePreview = useMemo(() => {
     try {
@@ -276,7 +292,7 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PROPULSION ECONOMY V0.7.1</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PROPULSION ECONOMY V0.7.2</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
         <button className="settings-button" onClick={() => setShowSettings(true)}>界面设置</button>
@@ -347,6 +363,7 @@ export function App() {
           game={game}
           galaxy={generated.galaxy}
           shipTypes={generated.scenario.shipTypes}
+          sublightDistanceUnit={sublightDistanceUnit}
           onPlacePurchaseAgreement={(lines) => commit(() => placeShipPurchaseAgreement(game, lines, generated.scenario.shipTypes))}
           onCreateConfiguration={(shipTypeId, name, cabins, build) => commit(() => createFleetConfiguration(game, shipTypeId, name, cabins, generated.scenario.shipTypes, build))}
           onUpdateConfiguration={(configurationId, name, cabins, build) => commit(() => updateFleetConfiguration(game, configurationId, name, cabins, generated.scenario.shipTypes, build))}
@@ -411,7 +428,7 @@ export function App() {
             onKeyDown={resizeInspectorWithKeyboard}
           ><i /></div>
           <aside className="inspector-panel glass-panel">
-            <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} onSelectPort={setSelectedPortId} />
+            <DemandPanel galaxy={generated.galaxy} settlement={previewSettlement} selectedPortId={selectedPortId} sublightDistanceUnit={sublightDistanceUnit} onSelectPort={setSelectedPortId} />
             <StarportFlightsPanel
               game={game}
               galaxy={generated.galaxy}
@@ -424,6 +441,7 @@ export function App() {
               galaxy={generated.galaxy}
               shipTypes={generated.scenario.shipTypes}
               selectedPortId={selectedPortId}
+              sublightDistanceUnit={sublightDistanceUnit}
               onCreateRoute={createRoute}
               onOpenFleet={() => setActiveView("fleet")}
             />
@@ -460,7 +478,7 @@ export function App() {
         <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="界面设置">
           <section className="settings-dialog glass-panel">
             <div className="settings-heading">
-              <div><span className="eyebrow">INTERFACE SETTINGS</span><h2>界面设置</h2><p>主题和分栏宽度会保存在当前浏览器。</p></div>
+              <div><span className="eyebrow">INTERFACE SETTINGS</span><h2>界面设置</h2><p>主题、单位和分栏宽度会保存在当前浏览器。</p></div>
               <button type="button" onClick={() => setShowSettings(false)}>关闭</button>
             </div>
             <h3>视觉主题</h3>
@@ -468,6 +486,11 @@ export function App() {
               <button type="button" className={uiTheme === "deep-space" ? "active deep-space" : "deep-space"} aria-pressed={uiTheme === "deep-space"} onClick={() => setUiTheme("deep-space")}><i /><strong>深空航务</strong><span>工业直角面板、均衡密度与航务仪表结构</span></button>
               <button type="button" className={uiTheme === "aurora" ? "active aurora" : "aurora"} aria-pressed={uiTheme === "aurora"} onClick={() => setUiTheme("aurora")}><i /><strong>极光玻璃</strong><span>悬浮圆角卡片、玻璃模糊、宽松间距与胶囊导航</span></button>
               <button type="button" className={uiTheme === "command-deck" ? "active command-deck" : "command-deck"} aria-pressed={uiTheme === "command-deck"} onClick={() => setUiTheme("command-deck")}><i /><strong>舰桥终端</strong><span>高密度网格、硬边框、紧凑表格与战术终端导航</span></button>
+            </div>
+            <h3>亚光速距离单位</h3>
+            <div className="distance-unit-options" role="group" aria-label="亚光速距离单位">
+              <button type="button" className={sublightDistanceUnit === "au" ? "active" : ""} aria-pressed={sublightDistanceUnit === "au"} onClick={() => setSublightDistanceUnit("au")}>AU</button>
+              <button type="button" className={sublightDistanceUnit === "km" ? "active" : ""} aria-pressed={sublightDistanceUnit === "km"} onClick={() => setSublightDistanceUnit("km")}>km · 科学计数法</button>
             </div>
             <div className="panel-width-setting">
               <div><h3>星港侧栏宽度</h3><p>也可以直接拖动星图与侧栏之间的分隔条；方向键每次调整 20px。</p></div>

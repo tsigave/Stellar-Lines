@@ -987,6 +987,10 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .theme-options .command-deck i { background: repeating-linear-gradient(0deg, rgba(180,219,89,.08) 0 2px, transparent 2px 8px), linear-gradient(135deg, #080b07 0 55%, #6f8d32 55% 76%, #e5903d 76%); }
 .theme-options strong { font-size: 14px; }
 .theme-options span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.distance-unit-options { width: min(360px, 100%); display: grid; grid-template-columns: 1fr 1fr; }
+.distance-unit-options button { min-height: 38px; border: 1px solid var(--border); color: var(--muted); background: rgba(7, 17, 25, .68); cursor: pointer; }
+.distance-unit-options button + button { border-left: 0; }
+.distance-unit-options button.active { color: var(--teal-soft); border-color: var(--border-strong); background: rgba(35, 111, 107, .24); box-shadow: inset 0 0 0 1px rgba(80, 223, 206, .12); }
 .panel-width-setting { margin-top: 20px; padding-top: 4px; display: grid; grid-template-columns: minmax(220px, 1fr) auto minmax(240px, 1fr) auto; align-items: center; gap: 12px; border-top: 1px solid var(--border); }
 .panel-width-setting h3 { margin-bottom: 0; }
 .panel-width-setting > strong { color: var(--teal); font-size: 15px; }
@@ -1351,19 +1355,23 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .shipyard-builder-column > strong, .shipyard-builder-column > small { display: block; }
 .shipyard-builder-column > small { margin-top: 6px; color: #78929a; }
 .shipyard-builder-column dl { margin: 14px 0 0; }
-.shipyard-builder-column dl div { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid rgba(111, 160, 170, .12); }
+.shipyard-builder-column dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid rgba(111, 160, 170, .12); }
 .shipyard-builder-column dt { color: #78929a; }
 .shipyard-builder-column dd { margin: 0; color: #bed0ce; text-align: right; }
 .options-column > label { display: grid; gap: 5px; margin-bottom: 11px; color: #8fa7ad; }
-.options-column select, .mission-inputs input, .mission-profile-source select { min-height: 34px; border: 1px solid rgba(111, 160, 170, .25); color: #bfd0ce; background: #091923; }
+.options-column select, .mission-inputs input, .mission-profile-source select, .planned-route-inputs select { min-height: 34px; border: 1px solid rgba(111, 160, 170, .25); color: #bfd0ce; background: #091923; }
 .ship-description { color: #82979d; font-size: 12px; line-height: 1.55; }
 .ship-structure-data { margin: 12px 0 15px !important; }
 .ship-structure-data dd { font-variant-numeric: tabular-nums; }
-.ship-structure-data dd.efficiency-data { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-.efficiency-data button { padding: 0; border: 0; color: var(--teal); background: transparent; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-.efficiency-data button:hover { color: #d8fff8; }
-.efficiency-data button:disabled { color: #64777d; cursor: default; text-decoration: none; }
-.efficiency-curve-panel { margin: -3px 0 15px; padding: 11px 10px 7px; border: 1px solid rgba(80, 223, 206, .22); background: rgba(4, 17, 24, .82); animation: efficiency-curve-in 180ms ease-out; }
+.ship-structure-data > .efficiency-accordion-item { flex-wrap: wrap; align-items: center; }
+.efficiency-label { display: flex; align-items: center; gap: 6px; }
+.efficiency-label button { position: relative; width: 22px; height: 22px; padding: 0; border: 0; color: var(--teal); background: transparent; cursor: pointer; }
+.efficiency-label button i { position: absolute; top: 7px; left: 7px; width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid currentColor; transform-origin: 2px 4px; transition: transform 160ms ease; }
+.efficiency-accordion-item.expanded .efficiency-label button i { transform: rotate(90deg); }
+.efficiency-label button:hover, .efficiency-label button:focus-visible { color: #d8fff8; outline: 1px solid rgba(80, 223, 206, .42); outline-offset: -2px; }
+.efficiency-label button:disabled { color: #64777d; cursor: default; outline: none; }
+.ship-structure-data dd.efficiency-data { min-width: 0; font-variant-numeric: tabular-nums; }
+.efficiency-curve-panel { flex: 1 0 100%; margin: 5px 0 2px; padding: 11px 10px 7px; border: 1px solid rgba(80, 223, 206, .22); background: rgba(4, 17, 24, .82); animation: efficiency-curve-in 180ms ease-out; }
 .efficiency-curve-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 5px; }
 .efficiency-curve-heading > div { display: flex; flex-direction: column; gap: 3px; }
 .efficiency-curve-heading strong { color: #cce5e2; font-size: 13px; }
@@ -1371,12 +1379,14 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .efficiency-curve-heading > span { color: var(--amber); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
 .efficiency-curve-panel svg { width: 100%; height: auto; display: block; overflow: visible; }
 .efficiency-curve-panel svg line { stroke: rgba(112, 150, 161, .15); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.efficiency-curve-panel svg polyline { fill: none; stroke: var(--teal); stroke-width: 2.2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px rgba(80, 223, 206, .35)); }
+.efficiency-curve-panel svg .curve-line { fill: none; stroke: var(--teal); stroke-width: 2.2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px rgba(80, 223, 206, .35)); }
 .efficiency-curve-panel svg text { fill: #698087; font-size: 9px; }
 .efficiency-curve-panel svg .axis-label { fill: #829ca1; font-size: 10px; }
 .efficiency-curve-panel svg .curve-point { fill: #9dc8c4; stroke: #0a1b23; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .efficiency-curve-panel svg .current-guide { stroke: rgba(242, 189, 105, .62); stroke-dasharray: 4 3; }
 .efficiency-curve-panel svg .current-point { fill: var(--amber); stroke: #fff0cd; stroke-width: 1.6; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px rgba(242, 189, 105, .58)); }
+.efficiency-curve-panel svg .curve-drag-target { fill: transparent; cursor: ew-resize; touch-action: none; }
+.efficiency-curve-panel svg .curve-drag-target:focus { outline: none; stroke: rgba(242, 189, 105, .7); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
 @keyframes efficiency-curve-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
 .ship-selector-column .ship-family-menu.compact { display: grid; grid-template-columns: 1fr; gap: 6px; }
 .ship-family-branch { min-width: 0; }
@@ -1406,6 +1416,8 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .mission-inputs label { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 5px; color: #829ba2; }
 .mission-inputs label input { grid-column: 1; width: 100%; }
 .mission-inputs label small { grid-column: 2; grid-row: 2; padding-bottom: 8px; }
+.planned-route-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 10px; }
+.planned-route-inputs label select { grid-column: 1 / -1; width: 100%; min-width: 0; }
 .mission-verdict { display: grid; gap: 6px; margin: 14px 0; padding: 11px; border: 1px solid rgba(111, 160, 170, .16); background: rgba(12, 29, 39, .72); }
 .mission-verdict small { color: #d18f88; }
 .mission-phases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }

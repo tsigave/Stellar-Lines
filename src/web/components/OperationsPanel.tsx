@@ -15,13 +15,18 @@ import {
   type Route,
   type ShipType,
 } from "../../index.js";
-import { formatCredits } from "../format.js";
+import {
+  formatCredits,
+  formatSublightDistanceKm,
+  type SublightDistanceUnit,
+} from "../format.js";
 
 interface OperationsPanelProps {
   game: GameState;
   galaxy: GeneratedGalaxy;
   shipTypes: readonly ShipType[];
   selectedPortId: string;
+  sublightDistanceUnit: SublightDistanceUnit;
   onCreateRoute: (input: CreateRouteInput) => void;
   onOpenFleet: () => void;
 }
@@ -33,6 +38,7 @@ export function OperationsPanel({
   galaxy,
   shipTypes,
   selectedPortId,
+  sublightDistanceUnit,
   onCreateRoute,
   onOpenFleet,
 }: OperationsPanelProps) {
@@ -44,6 +50,12 @@ export function OperationsPanel({
   const [routingMode, setRoutingMode] = useState<PlayerRoutingMode>("hyperspace");
   const basePort = galaxy.ports.find((port) => port.id === game.basePortId);
   const destinationPort = galaxy.ports.find((port) => port.id === destinationPortId);
+  const baseExitDistance = routingMode === "hyperspace"
+    ? basePort?.hyperspaceExitDistanceKm
+    : basePort?.warpExitDistanceKm;
+  const destinationExitDistance = routingMode === "hyperspace"
+    ? destinationPort?.hyperspaceExitDistanceKm
+    : destinationPort?.warpExitDistanceKm;
 
   const availableShips = useMemo(
     () => game.fleet.filter((ship) =>
@@ -217,7 +229,7 @@ export function OperationsPanel({
         <span>基地</span><strong>{basePort?.name}</strong>
         <i>→</i>
         <span>目的地</span><strong>{destinationPort?.name}</strong>
-        <small>跃出点距离：基地 {((routingMode === "hyperspace" ? basePort?.hyperspaceExitDistanceKm : basePort?.warpExitDistanceKm) ?? 0).toLocaleString()} km · 目的地 {((routingMode === "hyperspace" ? destinationPort?.hyperspaceExitDistanceKm : destinationPort?.warpExitDistanceKm) ?? 0).toLocaleString()} km</small>
+        <small>跃出点距离：基地 {formatSublightDistanceKm(baseExitDistance ?? 0, sublightDistanceUnit)} · 目的地 {formatSublightDistanceKm(destinationExitDistance ?? 0, sublightDistanceUnit)}</small>
       </div>
 
       <label className="field-label" htmlFor="route-destination">目的星港</label>

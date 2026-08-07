@@ -1,16 +1,23 @@
+import { deterministicExitDistanceKm } from "../../fuel.js";
 import { PASSENGER_TYPES, type DaySettlement, type GeneratedGalaxy } from "../../types.js";
-import { formatNumber, formatPopulation } from "../format.js";
+import {
+  formatNumber,
+  formatPopulation,
+  formatSublightDistanceKm,
+  type SublightDistanceUnit,
+} from "../format.js";
 
 interface DemandPanelProps {
   galaxy: GeneratedGalaxy;
   settlement: DaySettlement;
   selectedPortId: string;
+  sublightDistanceUnit: SublightDistanceUnit;
   onSelectPort?: (portId: string) => void;
 }
 
 const TYPE_LABELS = { business: "商务", leisure: "休闲旅游", budget: "廉价", luxury: "高端" } as const;
 
-export function DemandPanel({ galaxy, settlement, selectedPortId, onSelectPort }: DemandPanelProps) {
+export function DemandPanel({ galaxy, settlement, selectedPortId, sublightDistanceUnit, onSelectPort }: DemandPanelProps) {
   const port = galaxy.ports.find((candidate) => candidate.id === selectedPortId);
   const system = galaxy.systems.find((candidate) => candidate.id === port?.systemId);
   if (!port || !system) return null;
@@ -41,6 +48,8 @@ export function DemandPanel({ galaxy, settlement, selectedPortId, onSelectPort }
     .sort((left, right) => right.potential - left.potential)
     .slice(0, 6);
   const maximumDemand = Math.max(1, ...destinations.map((destination) => destination.potential));
+  const hyperspaceExitDistance = port.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(port.systemId, "hyperspace");
+  const warpExitDistance = port.warpExitDistanceKm ?? deterministicExitDistanceKm(port.systemId, "warp");
 
   return (
     <section className="demand-section">
@@ -56,6 +65,8 @@ export function DemandPanel({ galaxy, settlement, selectedPortId, onSelectPort }
         <span>服务人口 <strong>{formatPopulation(port.populationMillions ?? port.population)}</strong></span>
         <span>星港服务费 <strong>{formatNumber(port.serviceFee)} Cr</strong></span>
         <span>容量 <strong>{formatNumber(port.dailyCapacity)}</strong></span>
+        <span>超空间跃出点距离 <strong>{formatSublightDistanceKm(hyperspaceExitDistance, sublightDistanceUnit)}</strong></span>
+        <span>曲率跃出点距离 <strong>{formatSublightDistanceKm(warpExitDistance, sublightDistanceUnit)}</strong></span>
       </div>
       <div className="class-demand">
         {PASSENGER_TYPES.map((passengerType) => (

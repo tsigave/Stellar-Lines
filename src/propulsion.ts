@@ -10,10 +10,13 @@ import {
   type ShipType,
   type SublightEngineModel,
 } from "./types.js";
-import { cabinInstallationMass, PASSENGER_AND_BAGGAGE_MASS_TONNES } from "./fuel.js";
+import {
+  ASTRONOMICAL_UNIT_KM,
+  cabinInstallationMass,
+  PASSENGER_AND_BAGGAGE_MASS_TONNES,
+} from "./fuel.js";
 
 export const LIGHT_SPEED_METERS_PER_SECOND = 299_792_458;
-export const ASTRONOMICAL_UNIT_KM = 149_597_870.7;
 export const STANDARD_SUBLIGHT_DISTANCE_AU = 0.15;
 export const STANDARD_MASS_ENERGY_CONVERSION_EFFICIENCY = 0.00394;
 export const STANDARD_SUBLIGHT_RETENTION = 0.96359205;
@@ -183,10 +186,10 @@ export interface ResolveMissionInput {
 }
 
 const FAMILY_FUEL_RATIO: Readonly<Record<string, number>> = {
-  "frontier-pioneer": 0.68,
+  "frontier-pioneer": 0.685,
   "vector-fast": 0.84,
   "meridian-mainline": 1,
-  "atlas-grand": 0.98,
+  "atlas-grand": 0.99,
   "celestial-yacht": 0.86,
   "aurora-clipper": 0.88,
   "horizon-coach": 1.02,
@@ -326,19 +329,80 @@ export function defaultBuildForShipType(ship: ShipType, cabins?: CabinConfigurat
   };
 }
 
-function interpolate(points: readonly { x: number; y: number }[], x: number): number {
+export interface FittedCurvePoint {
+  x: number;
+  y: number;
+  slope: number;
+}
+
+function endpointSlope(firstWidth: number, secondWidth: number, firstDelta: number, secondDelta: number): number {
+  const candidate = ((2 * firstWidth + secondWidth) * firstDelta - firstWidth * secondDelta)
+    / (firstWidth + secondWidth);
+  if (Math.sign(candidate) !== Math.sign(firstDelta)) return 0;
+  if (Math.sign(firstDelta) !== Math.sign(secondDelta) && Math.abs(candidate) > Math.abs(3 * firstDelta)) {
+    return 3 * firstDelta;
+  }
+  return candidate;
+}
+
+/**
+ * Shape-preserving cubic Hermite fit through measured curve points.
+ * The returned slopes are also suitable for constructing an equivalent SVG cubic path.
+ */
+export function fitShapePreservingCurve(points: readonly { x: number; y: number }[]): readonly FittedCurvePoint[] {
   const sorted = [...points].sort((left, right) => left.x - right.x);
-  if (x <= sorted[0]!.x) return sorted[0]!.y;
-  if (x >= sorted.at(-1)!.x) return sorted.at(-1)!.y;
-  const upperIndex = sorted.findIndex((point) => point.x >= x);
-  const lower = sorted[upperIndex - 1]!;
-  const upper = sorted[upperIndex]!;
-  const fraction = (x - lower.x) / (upper.x - lower.x);
-  return lower.y + (upper.y - lower.y) * fraction;
+  if (sorted.length === 0) return [];
+  if (sorted.length === 1) return [{ ...sorted[0]!, slope: 0 }];
+
+  const widths = sorted.slice(1).map((point, index) => point.x - sorted[index]!.x);
+  if (widths.some((width) => width <= 0)) throw new Error("Curve point x values must be unique");
+  const deltas = widths.map((width, index) => (sorted[index + 1]!.y - sorted[index]!.y) / width);
+  if (sorted.length === 2) {
+    return sorted.map((point) => ({ ...point, slope: deltas[0]! }));
+  }
+
+  const slopes = new Array<number>(sorted.length).fill(0);
+  slopes[0] = endpointSlope(widths[0]!, widths[1]!, deltas[0]!, deltas[1]!);
+  for (let index = 1; index < sorted.length - 1; index += 1) {
+    const previousDelta = deltas[index - 1]!;
+    const nextDelta = deltas[index]!;
+    if (previousDelta === 0 || nextDelta === 0 || Math.sign(previousDelta) !== Math.sign(nextDelta)) {
+      slopes[index] = 0;
+      continue;
+    }
+    const previousWidth = widths[index - 1]!;
+    const nextWidth = widths[index]!;
+    const previousWeight = 2 * nextWidth + previousWidth;
+    const nextWeight = nextWidth + 2 * previousWidth;
+    slopes[index] = (previousWeight + nextWeight)
+      / (previousWeight / previousDelta + nextWeight / nextDelta);
+  }
+  const last = sorted.length - 1;
+  slopes[last] = endpointSlope(widths[last - 1]!, widths[last - 2]!, deltas[last - 1]!, deltas[last - 2]!);
+  return sorted.map((point, index) => ({ ...point, slope: slopes[index]! }));
+}
+
+export function fittedCurveValueAt(points: readonly { x: number; y: number }[], x: number): number {
+  const fitted = fitShapePreservingCurve(points);
+  if (fitted.length === 0) return 0;
+  if (x <= fitted[0]!.x) return fitted[0]!.y;
+  if (x >= fitted.at(-1)!.x) return fitted.at(-1)!.y;
+
+  const upperIndex = fitted.findIndex((point) => point.x >= x);
+  const lower = fitted[upperIndex - 1]!;
+  const upper = fitted[upperIndex]!;
+  const width = upper.x - lower.x;
+  const fraction = (x - lower.x) / width;
+  const fractionSquared = fraction * fraction;
+  const fractionCubed = fractionSquared * fraction;
+  return (2 * fractionCubed - 3 * fractionSquared + 1) * lower.y
+    + (fractionCubed - 2 * fractionSquared + fraction) * width * lower.slope
+    + (-2 * fractionCubed + 3 * fractionSquared) * upper.y
+    + (fractionCubed - fractionSquared) * width * upper.slope;
 }
 
 export function directionalEfficiencyAt(engine: SublightEngineModel, thrustRatio: number): number {
-  return interpolate(engine.directionalEfficiencyCurve.map((point) => ({ x: point.ratio, y: point.efficiency })), thrustRatio);
+  return fittedCurveValueAt(engine.directionalEfficiencyCurve.map((point) => ({ x: point.ratio, y: point.efficiency })), thrustRatio);
 }
 
 export function effectiveExhaustVelocityMetersPerSecond(engine: SublightEngineModel, thrustRatio: number): number {
@@ -347,7 +411,7 @@ export function effectiveExhaustVelocityMetersPerSecond(engine: SublightEngineMo
 }
 
 export function ftlKAtSpeed(drive: FtlDriveModel, speedLyPerDay: number): number {
-  return interpolate(drive.efficiencyCurve.map((point) => ({ x: point.speedLyPerDay, y: point.kPerLightYear })), speedLyPerDay);
+  return fittedCurveValueAt(drive.efficiencyCurve.map((point) => ({ x: point.speedLyPerDay, y: point.kPerLightYear })), speedLyPerDay);
 }
 
 function resolveComponents(input: ResolveMissionInput) {

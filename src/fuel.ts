@@ -11,6 +11,7 @@ export const CABIN_INSTALLATION_MASS_TONNES: CabinConfiguration = {
   premium: 0.35,
 };
 export const PASSENGER_AND_BAGGAGE_MASS_TONNES = 0.1;
+export const ASTRONOMICAL_UNIT_KM = 149_597_870.7;
 /** v0.7 stores an explicit destination reserve instead of a hidden percentage. */
 export const EMERGENCY_FUEL_MARGIN = 0;
 /** Deprecated compatibility name: one stored fuel unit is exactly one tonne in v0.7. */
@@ -24,9 +25,9 @@ function stableHash(value: string): number {
 
 export function deterministicExitDistanceKm(systemId: string, mode: "warp" | "hyperspace"): number {
   const fraction = stableHash(`${systemId}:${mode}:exit-distance`) / 4_294_967_295;
-  const minimum = mode === "hyperspace" ? 900_000 : 450_000;
-  const span = mode === "hyperspace" ? 5_100_000 : 3_250_000;
-  return Math.round((minimum + fraction * span) / 10_000) * 10_000;
+  const minimumAu = 0.14;
+  const spanAu = 0.02;
+  return Math.round((minimumAu + fraction * spanAu) * ASTRONOMICAL_UNIT_KM / 10_000) * 10_000;
 }
 
 export interface FuelConsumptionEstimate {
@@ -151,6 +152,10 @@ export function estimateSublightTransit(
   const specificImpulseSeconds = baseSpecificImpulse / impulsePenalty;
   const dryMassTonnes = dryOperatingMass(ship, cabins);
   const distanceMeters = Math.max(1, distanceKm) * 1_000;
+  const configuredSpeedKmPerSecond = Math.max(1, Math.min(
+    targetSpeedKmPerSecond,
+    ship.maximumSublightSpeedKmPerSecond ?? targetSpeedKmPerSecond,
+  ));
   let fuelTonnes = 0;
   let acceleration = 0;
   let peakSpeedMps = 0;
@@ -160,10 +165,7 @@ export function estimateSublightTransit(
       fuelTonnes * (1 + EMERGENCY_FUEL_MARGIN);
     acceleration = thrustMN * 1_000 / Math.max(1, grossMassTonnes);
     const maximumReachableMps = Math.sqrt(acceleration * distanceMeters);
-    const configuredMps = Math.max(1, Math.min(
-      targetSpeedKmPerSecond,
-      ship.maximumSublightSpeedKmPerSecond ?? targetSpeedKmPerSecond,
-    )) * 1_000;
+    const configuredMps = configuredSpeedKmPerSecond * 1_000;
     peakSpeedMps = Math.min(configuredMps, maximumReachableMps);
     burnSeconds = 2 * peakSpeedMps / Math.max(1e-6, acceleration);
     fuelTonnes = thrustMN * burnSeconds / Math.max(1, specificImpulseSeconds);
@@ -179,7 +181,10 @@ export function estimateSublightTransit(
     distanceKm: Math.round(distanceKm),
     targetSpeedKmPerSecond,
     maximumReachableSpeedKmPerSecond: Number((Math.sqrt(acceleration * distanceMeters) / 1_000).toFixed(3)),
-    peakSpeedKmPerSecond: Number((peakSpeedMps / 1_000).toFixed(3)),
+    peakSpeedKmPerSecond: Math.min(
+      configuredSpeedKmPerSecond,
+      Number((peakSpeedMps / 1_000).toFixed(3)),
+    ),
     thrustMN: Number(thrustMN.toFixed(3)),
     thrustRatio: normalizedThrustRatio,
     accelerationMetersPerSecondSquared: Number(acceleration.toFixed(6)),
