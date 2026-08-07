@@ -1,10 +1,18 @@
 import { simulateCampaign } from "./campaign.js";
 import { explainJourneyChoice } from "./choice.js";
 import { PASSENGER_CLASSES, PASSENGER_TYPES } from "./types.js";
-import { fuelEventIntensity } from "./events.js";
+import { applyEventsToWorldLegs, eventIntensity, fuelEventIntensity } from "./events.js";
 import { buildRouteServices } from "./routes.js";
 import { createRandom } from "./generation/random.js";
+import {
+  generateFlightSchedule,
+  type ScheduledFlight,
+  type SchedulingShip,
+  type ShipLogEntry,
+  type StarportCapacityDay,
+} from "./scheduling.js";
 import { FIXED_MAINTENANCE_COST_SCALE, FUEL_OPERATING_COST_SCALE } from "./parameters.js";
+import { deterministicExitDistanceKm, estimateSublightTransit } from "./fuel.js";
 import type {
   CabinConfiguration,
   CampaignDay,
@@ -22,7 +30,7 @@ import type {
   WorldLeg,
 } from "./types.js";
 
-export const GAME_STATE_VERSION = 11;
+export const GAME_STATE_VERSION = 13;
 export const STARTING_CASH = 3_000_000;
 export const ROUTE_OPENING_COST = 25_000;
 export const DAILY_COMPANY_OVERHEAD = 700;
@@ -107,6 +115,34 @@ export interface OwnedShip {
   configurationId: string | null;
   commissionedDay: number;
   purchasePricePaid: number;
+  /** 最后确认所在星港；在途时为最近一次起飞星港。 */
+  currentPortId?: string;
+  /** 备用池中的船不进入常规轮转，只在指定航线出现取消风险时顶替。 */
+  reserveForRouteId?: string | null;
+  /** 采购时预先指定；完成配置后可从下一可用时隙加入。 */
+  plannedRouteId?: string | null;
+}
+
+export interface PendingFleetChange {
+  id: string;
+  shipId: string;
+  fromRouteId: string | null;
+  toRouteId: string | null;
+  requestedDay: number;
+  effectiveDay: number;
+  status: "pending" | "applied";
+  expectedCost: number;
+  capacityDelta: number;
+  possiblyCancelledFlightIds: readonly string[];
+}
+
+export interface FlightFinancialEvent {
+  id: string;
+  minute: number;
+  flightId?: string;
+  routeId?: string;
+  kind: "ticket-revenue" | "fuel-purchase" | "flight-maintenance" | "depreciation" | "crew-payroll" | "delay-compensation" | "delay-extra-cost";
+  amount: number;
 }
 
 export interface ShipyardMarketOffer {
@@ -129,11 +165,19 @@ export interface ShipPurchaseOrder {
   deliveryDay: number;
   /** Automatic renewal orders pair each delivered ship with one existing ship. */
   replacementShipIds?: readonly string[];
+  targetRouteId?: string | null;
 }
 
 export interface ShipPurchaseLineInput {
   shipTypeId: string;
   quantity: number;
+  targetRouteId?: string | null;
+}
+
+export interface StarportCapacityInvestment {
+  portId: string;
+  level: number;
+  totalCost: number;
 }
 
 export interface FleetConfiguration {
@@ -242,11 +286,13 @@ export function quoteShipPurchaseAgreement(
   requestedLines: readonly ShipPurchaseLineInput[],
   shipTypes: readonly ShipType[],
 ): ShipPurchaseAgreementQuote {
-  const quantitiesByType = new Map<string, number>();
+  const quantitiesByType = new Map<string, ShipPurchaseLineInput>();
   for (const line of requestedLines) {
-    quantitiesByType.set(line.shipTypeId, (quantitiesByType.get(line.shipTypeId) ?? 0) + line.quantity);
+    const key = `${line.shipTypeId}:${line.targetRouteId ?? "standby"}`;
+    const current = quantitiesByType.get(key);
+    quantitiesByType.set(key, { ...line, quantity: (current?.quantity ?? 0) + line.quantity });
   }
-  const lines = [...quantitiesByType].map(([shipTypeId, quantity]) => ({ shipTypeId, quantity }))
+  const lines = [...quantitiesByType.values()]
     .filter((line) => line.quantity > 0);
   const totalShips = lines.reduce((sum, line) => sum + line.quantity, 0);
   if (totalShips < 1 || totalShips > 60) throw new Error("单份采购协议必须包含 1 至 60 艘舰船");
@@ -257,6 +303,11 @@ export function quoteShipPurchaseAgreement(
     }
     const shipType = shipTypes.find((candidate) => candidate.id === line.shipTypeId);
     if (!shipType) throw new Error("采购协议包含未知船型");
+    const targetRoute = line.targetRouteId ? state.routes.find((route) => route.id === line.targetRouteId) : undefined;
+    if (line.targetRouteId && !targetRoute) throw new Error("预定目标航线不存在");
+    if (targetRoute?.routingMode && !shipType.supportedModes.includes(targetRoute.routingMode)) {
+      throw new Error(`${shipType.name} 不支持预定航线的推进方式`);
+    }
     const offer = shipyardOfferFor(state, shipType);
     const inventoryUsed = Math.min(offer.inventory, line.quantity);
     const factoryQuantity = line.quantity - inventoryUsed;
@@ -352,6 +403,11 @@ export interface GameDayRecord {
   activeEventIds: readonly string[];
   announcedEventIds: readonly string[];
   routes: readonly GameRouteDaySummary[];
+  flightsOperated?: number;
+  flightsCancelled?: number;
+  delayedFlights?: number;
+  compensationPaid?: number;
+  financialEvents?: readonly FlightFinancialEvent[];
 }
 
 export type GameStatus = "playing" | "lost";
@@ -382,6 +438,15 @@ export interface GameState {
   primaryGoalCompletedOnDay: number | null;
   autoMaintenanceThreshold: number;
   autoReplacementAgeYears: number | null;
+  scheduledFlights: readonly ScheduledFlight[];
+  shipLogs: readonly ShipLogEntry[];
+  starportCapacity: readonly StarportCapacityDay[];
+  pendingFleetChanges: readonly PendingFleetChange[];
+  starportCapacityInvestments: Readonly<Record<string, StarportCapacityInvestment>>;
+  companyReputation: number;
+  localReputation: Readonly<Record<string, number>>;
+  unsettledFinancialEvents: readonly FlightFinancialEvent[];
+  staticAiRoutes: readonly Route[];
 }
 
 export interface CreateRouteInput {
@@ -579,6 +644,124 @@ function shipsForRoute(state: GameState, routeId: string): OwnedShip[] {
   return state.fleet.filter((ship) => ship.routeId === routeId);
 }
 
+export function buildGameSchedule(
+  state: Pick<GameState, "config" | "day" | "routes" | "fleet" | "fleetConfigurations"> & Partial<Pick<GameState, "basePortId" | "starportCapacityInvestments" | "starportCapacity" | "history" | "scheduledFlights" | "staticAiRoutes">>,
+  galaxy: GeneratedGalaxy,
+  shipTypes: readonly ShipType[],
+  numberOfDays = 7,
+  events: readonly MarketEvent[] = createGeneratedGameEvents(galaxy),
+) {
+  const scheduleStartMinute = state.day * 1_440;
+  const committedFlights = (state.scheduledFlights ?? []).filter((flight) => flight.status !== "cancelled" &&
+    flight.departureMinute < scheduleStartMinute && flight.arrivalMinute >= scheduleStartMinute);
+  const schedulingShips: SchedulingShip[] = state.fleet.flatMap((ship) => {
+    const configuration = fleetConfigurationForShip(state, ship);
+    if (!configuration) return [];
+    const committed = committedFlights.filter((flight) => flight.shipId === ship.id).sort((left, right) => right.arrivalMinute - left.arrivalMinute)[0];
+    return [{
+      id: ship.id, shipTypeId: ship.shipTypeId, routeId: ship.routeId,
+      condition: ship.condition, cabins: configuration.cabins,
+      ...(committed ? { currentPortId: committed.toPortId, availableMinute: committed.arrivalMinute } : ship.currentPortId ? { currentPortId: ship.currentPortId } : {}), commissionedDay: ship.commissionedDay,
+      flightHoursSinceMaintenance: ship.flightHoursSinceMaintenance,
+      maintenanceState: shipMaintenanceState(ship, state.day),
+      ...(ship.reserveForRouteId !== undefined ? { reserveForRouteId: ship.reserveForRouteId } : {}),
+    }];
+  });
+  const dispatchedShips = [...schedulingShips];
+  for (const route of state.routes.filter((candidate) => candidate.active)) {
+    const risky = dispatchedShips.filter((ship) => ship.routeId === route.id &&
+      (ship.maintenanceState === "required" || ship.maintenanceState === "maintenance" || ship.condition < 55));
+    const reserves = dispatchedShips.filter((ship) => !ship.routeId && ship.reserveForRouteId === route.id &&
+      ship.maintenanceState !== "required" && ship.maintenanceState !== "maintenance");
+    for (let index = 0; index < Math.min(risky.length, reserves.length); index += 1) {
+      const original = risky[index]!;
+      const reserve = reserves[index]!;
+      const originalIndex = dispatchedShips.indexOf(original);
+      if (originalIndex >= 0) dispatchedShips.splice(originalIndex, 1);
+      const reserveIndex = dispatchedShips.indexOf(reserve);
+      dispatchedShips[reserveIndex] = { ...reserve, routeId: route.id, substitutesForShipId: original.id };
+    }
+  }
+  const validShips = dispatchedShips.filter((ship) => ship.maintenanceState !== "required" && ship.maintenanceState !== "maintenance");
+  const aiRoutes = (state.staticAiRoutes ?? []).map((route) => ({ ...route, confirmedLongTermSlots: true, slotApplicationDay: 0 }));
+  const aiShips: SchedulingShip[] = aiRoutes.flatMap((route) => {
+    const type = shipTypes.find((candidate) => candidate.id === route.shipTypeId);
+    if (!type) return [];
+    const cabins = route.cabinCapacityByClass ?? {
+      economy: Math.floor(type.seats * .78), business: Math.floor(type.seats * .15),
+      premium: type.seats - Math.floor(type.seats * .78) - Math.floor(type.seats * .15),
+    };
+    return Array.from({ length: Math.max(1, Math.ceil(route.assignedShips)) }, (_, index): SchedulingShip => {
+      const id = `ai:${route.id}:${index}`;
+      const committed = committedFlights.filter((flight) => flight.shipId === id).sort((left, right) => right.arrivalMinute - left.arrivalMinute)[0];
+      const currentPortId = committed?.toPortId ?? route.stops[0]?.portId;
+      return {
+        id, shipTypeId: type.id, routeId: route.id, condition: 90, cabins,
+        ...(currentPortId ? { currentPortId } : {}),
+        ...(committed ? { availableMinute: committed.arrivalMinute } : {}),
+        commissionedDay: 1, flightHoursSinceMaintenance: 0, maintenanceState: "ready",
+      };
+    });
+  });
+  const capacityModifierByPort = Object.fromEntries(galaxy.ports.map((port) => {
+    const eventModifier = events.reduce((modifier, event) => {
+      if (!event.affectedPortIds.includes(port.id) || event.portCapacityModifier === undefined) return modifier;
+      const intensity = eventIntensity(event, state.day);
+      return modifier * (1 + (event.portCapacityModifier - 1) * intensity);
+    }, 1);
+    const investment = state.starportCapacityInvestments?.[port.id]?.level ?? 0;
+    const recentUtilization = state.starportCapacity?.filter((entry) => entry.portId === port.id).at(-1)?.utilization ?? 0;
+    const congestionModifier = recentUtilization > 0.95 ? 0.92 : recentUtilization > 0.85 ? 0.97 : 1;
+    return [port.id, eventModifier * (1 + investment * 0.08) * congestionModifier];
+  }));
+  const eventRiskByPort = Object.fromEntries(galaxy.ports.map((port) => [port.id,
+    events.reduce((risk, event) => event.affectedPortIds.includes(port.id)
+      ? Math.max(risk, eventIntensity(event, state.day)) : risk, 0),
+  ]));
+  const capacityModifierByPortDay: Record<string, number> = {};
+  const eventRiskByPortDay: Record<string, number> = {};
+  for (let day = state.day; day <= state.day + Math.max(370, numberOfDays); day += 1) {
+    for (const port of galaxy.ports) {
+      const eventModifier = events.reduce((modifier, event) => {
+        if (!event.affectedPortIds.includes(port.id) || event.portCapacityModifier === undefined) return modifier;
+        return modifier * (1 + (event.portCapacityModifier - 1) * eventIntensity(event, day));
+      }, 1);
+      const investment = state.starportCapacityInvestments?.[port.id]?.level ?? 0;
+      const recentUtilization = state.starportCapacity?.filter((entry) => entry.portId === port.id).at(-1)?.utilization ?? 0;
+      const congestionModifier = recentUtilization > .95 ? .92 : recentUtilization > .85 ? .97 : 1;
+      capacityModifierByPortDay[`${port.id}:${day}`] = eventModifier * (1 + investment * .08) * congestionModifier;
+      eventRiskByPortDay[`${port.id}:${day}`] = events.reduce((risk, event) => event.affectedPortIds.includes(port.id)
+        ? Math.max(risk, eventIntensity(event, day)) : risk, 0);
+    }
+  }
+  const historicalUseByRoute = Object.fromEntries(state.routes.map((route) => [route.id,
+    Math.min(1, (state.history ?? []).filter((day) => day.routes.some((summary) => summary.routeId === route.id)).length / 28),
+  ]));
+  const loadFactorByRoute = Object.fromEntries(state.routes.map((route) => {
+    const latest = [...(state.history ?? [])].reverse().flatMap((record) => record.routes).find((summary) => summary.routeId === route.id);
+    return [route.id, latest?.loadFactor ?? 0.7];
+  }));
+  const schedule = generateFlightSchedule({
+    seed: state.config.seed,
+    startDay: state.day,
+    numberOfDays,
+    routes: [...aiRoutes, ...state.routes],
+    ships: [...aiShips, ...validShips],
+    shipTypes,
+    ports: galaxy.ports,
+    worldLegs: applyEventsToWorldLegs(gameWorldLegs(galaxy), events, state.day),
+    ...(state.basePortId ? { basePortId: state.basePortId } : {}),
+    capacityModifierByPort,
+    eventRiskByPort,
+    capacityModifierByPortDay,
+    eventRiskByPortDay,
+    historicalUseByRoute,
+    loadFactorByRoute,
+    committedFlights,
+  });
+  return { ...schedule, shipLogs: schedule.shipLogs.filter((entry) => !entry.shipId.startsWith("ai:")) };
+}
+
 function operationalPlayerRoutes(state: GameState, shipTypes: readonly ShipType[]): Route[] {
   return state.routes.flatMap((route) => {
     if (!route.active) return [];
@@ -588,42 +771,53 @@ function operationalPlayerRoutes(state: GameState, shipTypes: readonly ShipType[
         !!fleetConfigurationForShip(state, ship);
     });
     if (availableShips.length === 0) return [];
-    const configurations = availableShips.map((ship) => fleetConfigurationForShip(state, ship)!);
-    const shipType = shipTypes.find((candidate) => candidate.id === route.shipTypeId);
-    const cabinCapacityByClass: CabinConfiguration = {
-      economy: configurations.reduce((sum, configuration) => sum + configuration.cabins.economy, 0) / availableShips.length,
-      business: configurations.reduce((sum, configuration) => sum + configuration.cabins.business, 0) / availableShips.length,
-      premium: configurations.reduce((sum, configuration) => sum + configuration.cabins.premium, 0) / availableShips.length,
-    };
-    const maintenance = fleetFixedMaintenanceCost(availableShips, shipTypes, state.day);
-    const expectedHoldingDays = Math.max(360, (state.autoReplacementAgeYears ?? 8) * DAYS_PER_SHIP_YEAR);
-    const depreciationPerDay = shipType
-      ? availableShips.reduce((sum, ship) => {
+    const typeIds = [...new Set(availableShips.map((ship) => ship.shipTypeId))];
+    return typeIds.flatMap((shipTypeId, typeIndex) => {
+      const typeShips = availableShips.filter((ship) => ship.shipTypeId === shipTypeId);
+      const configurations = typeShips.map((ship) => fleetConfigurationForShip(state, ship)!);
+      const shipType = shipTypes.find((candidate) => candidate.id === shipTypeId);
+      if (!shipType) return [];
+      const cabinCapacityByClass: CabinConfiguration = {
+        economy: configurations.reduce((sum, configuration) => sum + configuration.cabins.economy, 0) / typeShips.length,
+        business: configurations.reduce((sum, configuration) => sum + configuration.cabins.business, 0) / typeShips.length,
+        premium: configurations.reduce((sum, configuration) => sum + configuration.cabins.premium, 0) / typeShips.length,
+      };
+      const maintenance = fleetFixedMaintenanceCost(typeShips, shipTypes, state.day);
+      const expectedHoldingDays = Math.max(360, (state.autoReplacementAgeYears ?? 8) * DAYS_PER_SHIP_YEAR);
+      const depreciationPerDay = typeShips.reduce((sum, ship) => {
           const residualDay = ship.commissionedDay + expectedHoldingDays;
           const residual = shipResaleValue(ship, shipType, residualDay);
           return sum + Math.max(0, ship.purchasePricePaid - residual) /
             Math.max(1, residualDay - ship.commissionedDay);
-        }, 0)
-      : 0;
-    return [{
-      ...route,
-      assignedShips: availableShips.length,
-      cabinCapacityByClass,
-      economics: {
-        fixedMaintenancePerDay: Math.max(0, maintenance.total - maintenance.ageSurcharge),
-        ageSurchargePerDay: maintenance.ageSurcharge,
-        depreciationPerDay,
-        expectedDelayCostPerDay: shipType
-          ? (1 - shipType.reliability) * shipType.crewCostPerFlightHour * 8 * availableShips.length
-          : 0,
-      },
-      ...(shipType ? {
-        effectiveComfort: availableShips.reduce(
+        }, 0);
+      return [{
+        ...route,
+        id: typeIndex === 0 ? route.id : `${route.id}:fleet:${shipTypeId}`,
+        parentRouteId: route.id,
+        shipTypeId,
+        assignedShips: typeShips.length,
+        cabinCapacityByClass,
+        economics: {
+          fixedMaintenancePerDay: Math.max(0, maintenance.total - maintenance.ageSurcharge),
+          ageSurchargePerDay: maintenance.ageSurcharge,
+          depreciationPerDay,
+          expectedDelayCostPerDay: (1 - shipType.reliability) * shipType.crewCostPerFlightHour * 8 * typeShips.length,
+        },
+        effectiveComfort: typeShips.reduce(
           (sum, ship) => sum + shipComfortAtAge(ship, shipType, state.day),
           0,
-        ) / availableShips.length,
-      } : {}),
-    }];
+        ) / typeShips.length,
+        operationalDeparturesPerWeek: (() => {
+          const horizonStart = state.day * 1_440;
+          const horizonEnd = horizonStart + 7 * 1_440;
+          const actual = state.scheduledFlights?.filter((flight) => flight.routeId === route.id && flight.shipTypeId === shipTypeId &&
+            flight.status !== "cancelled" && flight.departureMinute >= horizonStart && flight.departureMinute < horizonEnd).length;
+          const commercialStops = route.stops.filter((stop) => stop.stopType === "commercial").length;
+          const servicesPerCycle = route.kind === "return" ? Math.max(1, 2 * (commercialStops - 1)) : Math.max(1, commercialStops);
+          return actual / servicesPerCycle;
+        })(),
+      }];
+    });
   });
 }
 
@@ -632,10 +826,11 @@ export function createNewGame(
   galaxy: GeneratedGalaxy,
   basePortId: string,
   shipTypes: readonly ShipType[] = [],
+  staticAiRoutes: readonly Route[] = [],
 ): GameState {
   const basePort = galaxy.ports.find((port) => port.id === basePortId);
   if (!basePort) throw new Error("请选择一个有效的基地星球");
-  return {
+  const initial: GameState = {
     version: GAME_STATE_VERSION,
     config: copyConfig(config),
     companyName: "远星航运",
@@ -654,6 +849,7 @@ export function createNewGame(
         configurationId: null,
         commissionedDay: 1,
         purchasePricePaid: shipTypes.find((shipType) => shipType.id === "meridian-liner")?.purchasePrice ?? 2_200_000,
+        currentPortId: basePort.id,
       },
     ],
     fleetConfigurations: [],
@@ -686,7 +882,18 @@ export function createNewGame(
     primaryGoalCompletedOnDay: null,
     autoMaintenanceThreshold: DEFAULT_AUTO_MAINTENANCE_THRESHOLD,
     autoReplacementAgeYears: null,
+    scheduledFlights: [],
+    shipLogs: [],
+    starportCapacity: [],
+    pendingFleetChanges: [],
+    starportCapacityInvestments: {},
+    companyReputation: 70,
+    localReputation: { [basePort.id]: 72 },
+    unsettledFinancialEvents: [],
+    staticAiRoutes,
   };
+  const schedule = buildGameSchedule(initial, galaxy, shipTypes, 7);
+  return { ...initial, scheduledFlights: schedule.flights, shipLogs: schedule.shipLogs, starportCapacity: schedule.starportCapacity };
 }
 
 export function migrateGameState(value: unknown): unknown {
@@ -740,9 +947,9 @@ export function migrateGameState(value: unknown): unknown {
       return typeof price === "number" ? [{ day: entry.day, price }] : [];
     });
     const { fuelStorage: _legacyFuelStorage, ...rest } = candidate;
-    return {
+    candidate = {
       ...rest,
-      version: GAME_STATE_VERSION,
+      version: 11,
       fuelMarket,
       fuelWarehouse: {
         rented: quantity > 0,
@@ -760,6 +967,35 @@ export function migrateGameState(value: unknown): unknown {
         spotExposureShare: 0.4,
       },
       nextFuelContractNumber: 1,
+    };
+  }
+  if (candidate.version === 11) {
+    const basePortId = typeof candidate.basePortId === "string" ? candidate.basePortId : "";
+    const fleet = Array.isArray(candidate.fleet) ? candidate.fleet.map((ship) =>
+      ship && typeof ship === "object" ? { ...ship, currentPortId: (ship as Record<string, unknown>).currentPortId ?? basePortId } : ship
+    ) : [];
+    candidate = {
+      ...candidate,
+      version: 12,
+      fleet,
+      scheduledFlights: [],
+      shipLogs: [],
+      starportCapacity: [],
+      pendingFleetChanges: [],
+    };
+  }
+  if (candidate.version === 12) {
+    candidate = {
+      ...candidate,
+      version: GAME_STATE_VERSION,
+      fleet: Array.isArray(candidate.fleet) ? candidate.fleet.map((ship) => ship && typeof ship === "object"
+        ? { ...ship, reserveForRouteId: null, plannedRouteId: null }
+        : ship) : [],
+      starportCapacityInvestments: {},
+      companyReputation: 70,
+      localReputation: {},
+      unsettledFinancialEvents: [],
+      staticAiRoutes: [],
     };
   }
   return candidate;
@@ -790,6 +1026,15 @@ export function isGameState(value: unknown): value is GameState {
     typeof candidate.fuelWarehouse.quantity === "number" &&
     typeof candidate.fuelWarehouse.capacity === "number" &&
     Array.isArray(candidate.fuelContracts) &&
+    Array.isArray(candidate.scheduledFlights) &&
+    Array.isArray(candidate.shipLogs) &&
+    Array.isArray(candidate.starportCapacity) &&
+    Array.isArray(candidate.pendingFleetChanges) &&
+    !!candidate.starportCapacityInvestments &&
+    typeof candidate.companyReputation === "number" &&
+    !!candidate.localReputation &&
+    Array.isArray(candidate.unsettledFinancialEvents) &&
+    Array.isArray(candidate.staticAiRoutes) &&
     !!candidate.fuelAutoContractPolicy &&
     typeof candidate.nextFuelContractNumber === "number" &&
     typeof candidate.autoMaintenanceThreshold === "number" &&
@@ -808,6 +1053,7 @@ export function gameScenario(
   }));
   return {
     ...baseScenario,
+    companyReputation: { ...baseScenario.companyReputation, player: state.companyReputation },
     ports: dynamicPorts,
     worldLegs: gameWorldLegs(galaxy),
     routes: [
@@ -820,6 +1066,12 @@ export function gameScenario(
         ? ships.reduce((sum, ship) => sum + ship.condition, 0) / ships.length
         : 100;
       return [route.id, averageCondition];
+    })),
+    onTimeRateByRoute: Object.fromEntries(state.routes.map((route) => {
+      const currentFlights = state.scheduledFlights.filter((flight) => flight.routeId === route.id && Math.floor(flight.departureMinute / 1_440) === state.day);
+      if (currentFlights.length > 0) return [route.id, currentFlights.filter((flight) => flight.onTime).length / currentFlights.length];
+      const recent = [...state.history].reverse().find((record) => record.routes.some((summary) => summary.routeId === route.id));
+      return [route.id, recent?.routes.find((summary) => summary.routeId === route.id)?.onTimeRate ?? 0.92];
     })),
     // Fuel shocks have already been applied to the unified market quote above.
     // Keep their demand/capacity effects without reapplying a local fuel price.
@@ -838,6 +1090,26 @@ export function buyShip(
   quantity = 1,
 ): GameActionResult {
   return placeShipPurchaseAgreement(state, [{ shipTypeId, quantity }], shipTypes);
+}
+
+export function orderShipReplacement(
+  state: GameState,
+  shipId: string,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  requirePlaying(state);
+  const ship = state.fleet.find((candidate) => candidate.id === shipId);
+  if (!ship) throw new Error("舰船不存在");
+  if (state.shipPurchaseOrders.some((order) => order.replacementShipIds?.includes(shipId))) {
+    throw new Error("该舰船已有替代订单");
+  }
+  const purchased = placeShipPurchaseAgreement(state, [{ shipTypeId: ship.shipTypeId, quantity: 1, targetRouteId: ship.routeId }], shipTypes);
+  const agreementId = purchased.state.shipPurchaseOrders.at(-1)?.agreementId;
+  return {
+    state: { ...purchased.state, shipPurchaseOrders: purchased.state.shipPurchaseOrders.map((order) =>
+      order.agreementId === agreementId ? { ...order, replacementShipIds: [shipId] } : order) },
+    message: `${ship.name} 的同型号替代船已订购；交付时继承航线与客舱配置，旧船随后回收`,
+  };
 }
 
 export function placeShipPurchaseAgreement(
@@ -860,6 +1132,7 @@ export function placeShipPurchaseAgreement(
     agreementDiscountRate: line.agreementDiscountRate,
     orderedDay: state.day,
     deliveryDay: line.deliveryDay,
+    targetRouteId: line.targetRouteId ?? null,
   }));
   const inventoryByType = new Map(quote.lines.map((line) => [line.shipTypeId, line.inventoryUsed]));
   return {
@@ -978,7 +1251,12 @@ export function assignShipsToFleetConfiguration(
     state: {
       ...state,
       fleet: state.fleet.map((ship) =>
-        uniqueShipIds.includes(ship.id) ? { ...ship, configurationId } : ship,
+        uniqueShipIds.includes(ship.id) ? {
+          ...ship,
+          configurationId,
+          routeId: ship.plannedRouteId ?? ship.routeId,
+          plannedRouteId: null,
+        } : ship,
       ),
     },
     message: `已将 ${uniqueShipIds.length} 艘舰船分配至“${configuration.name}”`,
@@ -1039,15 +1317,8 @@ export function createPlayerRoute(
   const selectedTypes = selectedShips.map((ship) => shipTypes.find((candidate) => candidate.id === ship.shipTypeId));
   if (selectedTypes.some((shipType) => !shipType)) throw new Error("船型数据不存在");
   const concreteTypes = selectedTypes as ShipType[];
-  if (concreteTypes.some((shipType) => shipType.id !== concreteTypes[0]!.id)) {
-    throw new Error("同一航线只能分配相同船型的舰船");
-  }
   if (concreteTypes.some((shipType) => !shipType.supportedModes.includes(input.routingMode))) {
     throw new Error(`所选船只必须全部安装${input.routingMode === "warp" ? "曲率" : "超空间"}引擎`);
-  }
-  const serviceSpeed = concreteTypes[0]!.speedByMode[input.routingMode];
-  if (!serviceSpeed || concreteTypes.some((shipType) => shipType.speedByMode[input.routingMode] !== serviceSpeed)) {
-    throw new Error("同一航线只能分配推进方式与航行速度相同的船只");
   }
   const shipType = concreteTypes[0]!;
   const cabinCapacityByClass: CabinConfiguration = {
@@ -1082,6 +1353,14 @@ export function createPlayerRoute(
     },
     maintenanceAllowanceHours: 0,
     active: true,
+    cruiseRatioByShipType: Object.fromEntries(concreteTypes.map((type) => [type.id, 1])),
+    sublightTargetSpeedKmPerSecondByShipType: Object.fromEntries(concreteTypes.map((type) => [type.id, Math.min(80, type.maximumSublightSpeedKmPerSecond ?? 80)])),
+    sublightThrustRatioByShipType: Object.fromEntries(concreteTypes.map((type) => [type.id, type.fuelOptimalThrustRatio ?? 0.72])),
+    scheduleBufferMinutes: 30,
+    directionalPricingLinked: true,
+    confirmedLongTermSlots: false,
+    slotBidPerMovement: 0,
+    slotApplicationDay: state.day,
   };
   for (const selectedType of concreteTypes) {
     buildRouteServices(
@@ -1091,8 +1370,7 @@ export function createPlayerRoute(
       gameWorldLegs(galaxy),
     );
   }
-  return {
-    state: {
+  const prospectiveState: GameState = {
       ...state,
       cash: state.cash - ROUTE_OPENING_COST,
       routes: [...state.routes, route],
@@ -1100,8 +1378,20 @@ export function createPlayerRoute(
         selectedShipIds.includes(candidate.id) ? { ...candidate, routeId: route.id } : candidate,
       ),
       nextRouteNumber: number + 1,
+    };
+  const schedule = buildGameSchedule(prospectiveState, galaxy, shipTypes, 7);
+  const newRouteFlights = schedule.flights.filter((flight) => flight.routeId === route.id);
+  if (newRouteFlights.some((flight) => flight.status === "cancelled")) {
+    throw new Error("星港未来七日硬容量不足，请减少班次或更换时刻");
+  }
+  return {
+    state: {
+      ...prospectiveState,
+      scheduledFlights: schedule.flights,
+      shipLogs: schedule.shipLogs,
+      starportCapacity: schedule.starportCapacity,
     },
-    message: `航线“${route.name}”已开通，已分配 ${selectedShips.length} 艘船`,
+    message: `航线“${route.name}”已开通，${selectedShips.length} 艘兼容舰船已生成五分钟精度班表`,
   };
 }
 
@@ -1132,6 +1422,13 @@ export function performShipMaintenance(
             }
           : candidate,
       ),
+      unsettledFinancialEvents: [...state.unsettledFinancialEvents, {
+        id: `maintenance:${ship.id}:${state.day}:${state.unsettledFinancialEvents.length + 1}`,
+        minute: state.day * 1_440,
+        ...(ship.routeId ? { routeId: ship.routeId } : {}),
+        kind: "flight-maintenance",
+        amount: -cost,
+      }],
     },
     message: `${ship.name} 已进场维护，将在第 ${state.day + MAINTENANCE_DAYS} 日恢复`,
   };
@@ -1304,7 +1601,7 @@ export function setFuelAutoContractPolicy(
   return {
     state: { ...state, fuelAutoContractPolicy: normalized },
     message: normalized.enabled
-      ? `自动签约已启用：油价不高于 ${normalized.triggerPrice.toFixed(2)} Cr 时，至少保留 ${(normalized.spotExposureShare * 100).toFixed(0)}% 现货敞口`
+      ? `自动签约已启用：燃料价格不高于 ${normalized.triggerPrice.toFixed(2)} Cr 时，至少保留 ${(normalized.spotExposureShare * 100).toFixed(0)}% 现货敞口`
       : "自动签约已关闭",
   };
 }
@@ -1416,6 +1713,9 @@ export function deliverShipPurchaseOrders(
         configurationId: replacedShip?.configurationId ?? null,
         commissionedDay: throughDay,
         purchasePricePaid: order.unitPrice,
+        currentPortId: replacedShip?.currentPortId ?? state.basePortId,
+        reserveForRouteId: replacedShip?.reserveForRouteId ?? null,
+        plannedRouteId: replacedShip?.plannedRouteId ?? order.targetRouteId ?? null,
       });
     }
   }
@@ -1590,40 +1890,365 @@ export function setPlayerRouteFares(
   };
 }
 
+export function setRouteDirectionalFares(
+  state: GameState,
+  routeId: string,
+  direction: "outbound" | "return",
+  fares: CabinConfiguration,
+): GameActionResult {
+  requirePlaying(state);
+  const route = state.routes.find((candidate) => candidate.id === routeId);
+  if (!route) throw new Error("航线不存在");
+  const normalized = Object.fromEntries(PASSENGER_CLASSES.map((cabinClass) => [
+    cabinClass, Math.max(0, Math.round(fares[cabinClass])),
+  ])) as CabinConfiguration;
+  return {
+    state: {
+      ...state,
+      routes: state.routes.map((candidate) => candidate.id === routeId ? {
+        ...candidate,
+        pricing: {
+          ...candidate.pricing,
+          directionalFareByClass: candidate.directionalPricingLinked !== false
+            ? { outbound: normalized, return: normalized }
+            : { ...candidate.pricing.directionalFareByClass, [direction]: normalized },
+        },
+      } : candidate),
+    },
+    message: `“${route.name}”${direction === "outbound" ? "去程" : "回程"}票价已更新`,
+  };
+}
+
+export function setRouteDirectionalPricingLinked(state: GameState, routeId: string, linked: boolean): GameActionResult {
+  requirePlaying(state);
+  const route = state.routes.find((candidate) => candidate.id === routeId);
+  if (!route) throw new Error("航线不存在");
+  const outbound = route.pricing.directionalFareByClass?.outbound ?? route.pricing.fareByClass;
+  return {
+    state: { ...state, routes: state.routes.map((candidate) => candidate.id === routeId ? {
+      ...candidate,
+      directionalPricingLinked: linked,
+      pricing: linked && outbound ? { ...candidate.pricing, directionalFareByClass: { outbound, return: outbound } } : candidate.pricing,
+    } : candidate) },
+    message: `“${route.name}”双向票价已${linked ? "联动" : "拆分"}`,
+  };
+}
+
+export function setRouteCruiseRatio(
+  state: GameState,
+  routeId: string,
+  shipTypeId: string,
+  cruiseRatio: number,
+  shipTypes: readonly ShipType[],
+  galaxy?: GeneratedGalaxy,
+): GameActionResult {
+  requirePlaying(state);
+  const route = state.routes.find((candidate) => candidate.id === routeId);
+  const type = shipTypes.find((candidate) => candidate.id === shipTypeId);
+  if (!route || !type) throw new Error("航线或船型不存在");
+  const normalized = Number(clamp(cruiseRatio, type.minimumCruiseRatio ?? 0.7, type.maximumCruiseRatio ?? 1.1).toFixed(3));
+  const nextState: GameState = {
+      ...state,
+      routes: state.routes.map((candidate) => candidate.id === routeId ? {
+        ...candidate,
+        cruiseRatioByShipType: { ...candidate.cruiseRatioByShipType, [shipTypeId]: normalized },
+      } : candidate),
+    };
+  const schedule = galaxy ? buildGameSchedule(nextState, galaxy, shipTypes, 7) : null;
+  if (schedule?.flights.some((flight) => flight.routeId === routeId && flight.status === "cancelled")) {
+    throw new Error("该速度方案会超出星港硬容量或失去可用时隙，不能提交");
+  }
+  return {
+    state: schedule ? { ...nextState, scheduledFlights: schedule.flights, shipLogs: schedule.shipLogs, starportCapacity: schedule.starportCapacity } : nextState,
+    message: `“${route.name}”的 ${type.name} 巡航速度已设为标称速度的 ${(normalized * 100).toFixed(0)}%`,
+  };
+}
+
+export function setRouteSublightProfile(
+  state: GameState,
+  routeId: string,
+  shipTypeId: string,
+  targetSpeedKmPerSecond: number,
+  thrustRatio: number,
+  shipTypes: readonly ShipType[],
+  galaxy: GeneratedGalaxy,
+): GameActionResult {
+  requirePlaying(state);
+  const route = state.routes.find((candidate) => candidate.id === routeId);
+  const type = shipTypes.find((candidate) => candidate.id === shipTypeId);
+  if (!route || !type) throw new Error("航线或船型不存在");
+  const configuration = state.fleet.find((ship) => ship.routeId === routeId && ship.shipTypeId === shipTypeId);
+  const cabins = configuration ? fleetConfigurationForShip(state, configuration)?.cabins : undefined;
+  if (!cabins) throw new Error("该型号尚无航线客舱配置");
+  const normalizedThrust = Number(clamp(thrustRatio, 0.25, 1).toFixed(3));
+  const mode = route.routingMode ?? "hyperspace";
+  const relevantPorts = route.stops.flatMap((stop) => galaxy.ports.filter((port) => port.id === stop.portId));
+  const safeMaximum = relevantPorts.reduce((minimum, port) => {
+    const distance = mode === "hyperspace"
+      ? port.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(port.systemId, mode)
+      : port.warpExitDistanceKm ?? deterministicExitDistanceKm(port.systemId, mode);
+    const estimate = estimateSublightTransit(type, distance, cabins, type.fuelCapacityTonnes, type.maximumSublightSpeedKmPerSecond ?? 120, normalizedThrust);
+    return Math.min(minimum, estimate.maximumReachableSpeedKmPerSecond, type.maximumSublightSpeedKmPerSecond ?? Number.POSITIVE_INFINITY);
+  }, Number.POSITIVE_INFINITY);
+  const normalizedSpeed = Number(clamp(targetSpeedKmPerSecond, 1, safeMaximum).toFixed(3));
+  const nextState: GameState = { ...state, routes: state.routes.map((candidate) => candidate.id === routeId ? {
+    ...candidate,
+    sublightTargetSpeedKmPerSecondByShipType: { ...candidate.sublightTargetSpeedKmPerSecondByShipType, [shipTypeId]: normalizedSpeed },
+    sublightThrustRatioByShipType: { ...candidate.sublightThrustRatioByShipType, [shipTypeId]: normalizedThrust },
+  } : candidate) };
+  const schedule = buildGameSchedule(nextState, galaxy, shipTypes, 7);
+  if (schedule.flights.some((flight) => flight.routeId === routeId && flight.status === "cancelled")) {
+    throw new Error("该亚光速方案会使班表失去可用时隙，不能提交");
+  }
+  return {
+    state: { ...nextState, scheduledFlights: schedule.flights, shipLogs: schedule.shipLogs, starportCapacity: schedule.starportCapacity },
+    message: `“${route.name}”的 ${type.name} 亚光速目标已设为 ${normalizedSpeed.toFixed(1)} km/s、额定推力 ${(normalizedThrust * 100).toFixed(0)}%`,
+  };
+}
+
+export function setRouteScheduleBuffer(
+  state: GameState,
+  routeId: string,
+  minutes: number,
+  galaxy: GeneratedGalaxy,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  requirePlaying(state);
+  const route = state.routes.find((candidate) => candidate.id === routeId);
+  if (!route) throw new Error("航线不存在");
+  const normalized = Math.max(0, Math.min(12 * 60, Math.round(minutes / 5) * 5));
+  const nextState: GameState = { ...state, routes: state.routes.map((candidate) => candidate.id === routeId ? { ...candidate, scheduleBufferMinutes: normalized } : candidate) };
+  const schedule = buildGameSchedule(nextState, galaxy, shipTypes, 7);
+  return { state: { ...nextState, scheduledFlights: schedule.flights, shipLogs: schedule.shipLogs, starportCapacity: schedule.starportCapacity }, message: `“${route.name}”轮转缓冲已设为 ${normalized} 分钟` };
+}
+
+export function setRouteSlotBid(
+  state: GameState,
+  routeId: string,
+  bidPerMovement: number,
+  galaxy: GeneratedGalaxy,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  requirePlaying(state);
+  const route = state.routes.find((candidate) => candidate.id === routeId);
+  if (!route) throw new Error("航线不存在");
+  const bid = Math.max(0, Math.min(500, Math.round(bidPerMovement)));
+  const nextState: GameState = { ...state, routes: state.routes.map((candidate) => candidate.id === routeId ? { ...candidate, slotBidPerMovement: bid } : candidate) };
+  const schedule = buildGameSchedule(nextState, galaxy, shipTypes, 7);
+  return { state: { ...nextState, scheduledFlights: schedule.flights, shipLogs: schedule.shipLogs, starportCapacity: schedule.starportCapacity }, message: `“${route.name}”时隙申请费已设为 ${bid} Cr/movement` };
+}
+
+export function setRouteWeeklyDepartureMinutes(
+  state: GameState,
+  routeId: string,
+  minutes: readonly number[],
+  galaxy?: GeneratedGalaxy,
+  shipTypes: readonly ShipType[] = [],
+): GameActionResult {
+  requirePlaying(state);
+  const route = state.routes.find((candidate) => candidate.id === routeId);
+  if (!route) throw new Error("航线不存在");
+  const normalized = [...new Set(minutes.map((minute) => Math.round(minute / 5) * 5))]
+    .filter((minute) => minute >= 0 && minute < 7 * 1_440)
+    .sort((left, right) => left - right);
+  const nextState: GameState = { ...state, routes: state.routes.map((candidate) => candidate.id === routeId ? { ...candidate, weeklyDepartureMinutes: normalized, confirmedLongTermSlots: normalized.length > 0 || candidate.confirmedLongTermSlots === true } : candidate) };
+  const schedule = galaxy ? buildGameSchedule(nextState, galaxy, shipTypes, 7) : null;
+  if (schedule?.flights.some((flight) => flight.routeId === routeId && flight.status === "cancelled")) {
+    throw new Error("该周班模板申请不到完整起降时隙，不能提交");
+  }
+  return {
+    state: schedule ? { ...nextState, scheduledFlights: schedule.flights, shipLogs: schedule.shipLogs, starportCapacity: schedule.starportCapacity } : nextState,
+    message: normalized.length > 0 ? `“${route.name}”已保存 ${normalized.length} 个五分钟精度周班时刻` : `“${route.name}”已恢复自动均匀排班`,
+  };
+}
+
+export function requestRouteFleetChange(
+  state: GameState,
+  shipId: string,
+  toRouteId: string | null,
+  shipTypes: readonly ShipType[],
+  galaxy?: GeneratedGalaxy,
+): GameActionResult {
+  requirePlaying(state);
+  const ship = state.fleet.find((candidate) => candidate.id === shipId);
+  if (!ship) throw new Error("舰船不存在");
+  if (state.pendingFleetChanges.some((change) => change.shipId === shipId && change.status === "pending")) {
+    throw new Error("该舰船已有待生效的调度变更");
+  }
+  const target = toRouteId ? state.routes.find((route) => route.id === toRouteId) : undefined;
+  if (toRouteId && !target) throw new Error("目标航线不存在");
+  const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
+  if (!type) throw new Error("船型不存在");
+  if (target && (!target.routingMode || !type.supportedModes.includes(target.routingMode))) {
+    throw new Error("该船型不支持目标航线的推进方式");
+  }
+  if (!fleetConfigurationForShip(state, ship)) throw new Error("舰船尚未安装可销售客舱");
+  const targetOrigin = target?.stops[0]?.portId ?? state.basePortId;
+  if (!ship.routeId && ship.currentPortId && ship.currentPortId !== targetOrigin) {
+    throw new Error("待命舰船不在目标航线起点，不能瞬移加入；请先安排返回基地");
+  }
+  const currentRoute = ship.routeId ? state.routes.find((route) => route.id === ship.routeId) : undefined;
+  const rotationOrigin = currentRoute?.stops[0]?.portId ?? state.basePortId;
+  const nextReturnArrival = state.scheduledFlights
+    .filter((flight) => flight.shipId === shipId && flight.status !== "cancelled" &&
+      flight.toPortId === rotationOrigin && flight.arrivalMinute >= state.day * 1_440)
+    .reduce((earliest, flight) => Math.min(earliest, flight.arrivalMinute), Number.POSITIVE_INFINITY);
+  const effectiveDay = ship.routeId === null
+    ? state.day + 1
+    : Number.isFinite(nextReturnArrival)
+      ? Math.max(state.day + 1, Math.ceil(nextReturnArrival / 1_440))
+      : state.day + 7;
+  const configuration = fleetConfigurationForShip(state, ship)!;
+  const seats = Object.values(configuration.cabins).reduce((sum, value) => sum + value, 0);
+  const capacityDelta = toRouteId ? seats : -seats;
+  let possiblyCancelledFlightIds: string[] = [];
+  if (galaxy) {
+    const previewState: GameState = {
+      ...state,
+      day: effectiveDay,
+      fleet: state.fleet.map((candidate) => candidate.id === shipId ? { ...candidate, routeId: toRouteId } : candidate),
+    };
+    const preview = buildGameSchedule(previewState, galaxy, shipTypes, 14);
+    const previewIds = new Set(preview.flights.filter((flight) => flight.status !== "cancelled").map((flight) => flight.id));
+    const withdrawn = state.scheduledFlights.filter((flight) => flight.shipId === shipId && flight.departureMinute >= effectiveDay * 1_440 && !previewIds.has(flight.id)).map((flight) => flight.id);
+    const capacityCancelled = preview.flights.filter((flight) => flight.status === "cancelled" &&
+      (flight.routeId === toRouteId || flight.routeId === ship.routeId)).map((flight) => flight.id);
+    possiblyCancelledFlightIds = [...new Set([...withdrawn, ...capacityCancelled])];
+    if (toRouteId && capacityCancelled.length > 0) {
+      throw new Error(`增班会超出星港硬时隙容量（预计 ${capacityCancelled.length} 班取消），不能提交`);
+    }
+  }
+  const change: PendingFleetChange = {
+    id: `fleet-change-${shipId}-${state.day}-${state.pendingFleetChanges.length + 1}`,
+    shipId,
+    fromRouteId: ship.routeId,
+    toRouteId,
+    requestedDay: state.day,
+    effectiveDay,
+    status: "pending",
+    expectedCost: Math.max(0, target?.slotBidPerMovement ?? 0) * 2,
+    capacityDelta,
+    possiblyCancelledFlightIds,
+  };
+  return {
+    state: { ...state, pendingFleetChanges: [...state.pendingFleetChanges, change] },
+    message: `${ship.name} 的调度变更将在第 ${effectiveDay} 日完成当前轮转后生效；每日单班容量变化 ${capacityDelta >= 0 ? "+" : ""}${capacityDelta} 席`,
+  };
+}
+
+export function setShipReserveRoute(
+  state: GameState,
+  shipId: string,
+  routeId: string | null,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  requirePlaying(state);
+  const ship = state.fleet.find((candidate) => candidate.id === shipId);
+  if (!ship) throw new Error("舰船不存在");
+  if (ship.routeId) throw new Error("执行常规轮转的舰船不能同时进入备用池");
+  const route = routeId ? state.routes.find((candidate) => candidate.id === routeId) : undefined;
+  if (routeId && !route) throw new Error("备用目标航线不存在");
+  const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
+  if (route?.routingMode && !type?.supportedModes.includes(route.routingMode)) throw new Error("船型与备用目标航线不兼容");
+  if (route && !fleetConfigurationForShip(state, ship)) throw new Error("备用船必须安装可销售客舱");
+  return {
+    state: { ...state, fleet: state.fleet.map((candidate) => candidate.id === shipId ? { ...candidate, reserveForRouteId: routeId } : candidate) },
+    message: route ? `${ship.name} 已加入“${route.name}”备用池，出现取消风险时自动顶替` : `${ship.name} 已退出备用池`,
+  };
+}
+
+export function investInStarportCapacity(
+  state: GameState,
+  portId: string,
+  galaxy: GeneratedGalaxy,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  requirePlaying(state);
+  const port = galaxy.ports.find((candidate) => candidate.id === portId);
+  if (!port) throw new Error("星港不存在");
+  const current = state.starportCapacityInvestments[portId];
+  const level = current?.level ?? 0;
+  if (level >= 5) throw new Error("该星港的容量协作投资已经达到上限");
+  const cost = Math.round(25_000 * (level + 1) * port.portLevel);
+  if (state.cash < cost) throw new Error("资金不足，无法投资星港容量");
+  const investment: StarportCapacityInvestment = { portId, level: level + 1, totalCost: (current?.totalCost ?? 0) + cost };
+  const nextState: GameState = { ...state, cash: state.cash - cost, starportCapacityInvestments: { ...state.starportCapacityInvestments, [portId]: investment } };
+  const schedule = buildGameSchedule(nextState, galaxy, shipTypes, 7);
+  return {
+    state: { ...nextState, scheduledFlights: schedule.flights, shipLogs: schedule.shipLogs, starportCapacity: schedule.starportCapacity },
+    message: `${port.name} 容量投资升至 ${investment.level} 级，基础 movement 修正 +${investment.level * 8}%`,
+  };
+}
+
+function applyDueFleetChanges(state: GameState, day: number): GameState {
+  const due = state.pendingFleetChanges.filter((change) => change.status === "pending" && change.effectiveDay <= day);
+  if (due.length === 0) return state;
+  const byShip = new Map(due.map((change) => [change.shipId, change]));
+  const fleet = state.fleet.map((ship) => {
+      const change = byShip.get(ship.id);
+      return change ? { ...ship, routeId: change.toRouteId, reserveForRouteId: null } : ship;
+    });
+  return {
+    ...state,
+    fleet,
+    routes: state.routes.map((route) => route.closingAfterRotation && !fleet.some((ship) => ship.routeId === route.id)
+      ? { ...route, active: false, closingAfterRotation: false }
+      : route),
+    pendingFleetChanges: state.pendingFleetChanges.map((change) => due.includes(change) ? { ...change, status: "applied" } : change),
+  };
+}
+
 export function closePlayerRoute(state: GameState, routeId: string): GameActionResult {
   requirePlaying(state);
   const route = state.routes.find((candidate) => candidate.id === routeId);
   if (!route) throw new Error("航线不存在");
+  const routeShips = state.fleet.filter((ship) => ship.routeId === routeId);
+  const changes = routeShips.map((ship, index): PendingFleetChange => {
+    const origin = route.stops[0]?.portId ?? state.basePortId;
+    const returnMinute = state.scheduledFlights.filter((flight) => flight.shipId === ship.id &&
+      flight.status !== "cancelled" && flight.toPortId === origin && flight.arrivalMinute >= state.day * 1_440)
+      .reduce((earliest, flight) => Math.min(earliest, flight.arrivalMinute), Number.POSITIVE_INFINITY);
+    const configuration = fleetConfigurationForShip(state, ship);
+    const seats = configuration ? Object.values(configuration.cabins).reduce((sum, value) => sum + value, 0) : 0;
+    return {
+      id: `fleet-change-${ship.id}-${state.day}-close-${index + 1}`,
+      shipId: ship.id, fromRouteId: routeId, toRouteId: null, requestedDay: state.day,
+      effectiveDay: Number.isFinite(returnMinute) ? Math.max(state.day + 1, Math.ceil(returnMinute / 1_440)) : state.day + 7,
+      status: "pending", expectedCost: 0, capacityDelta: -seats, possiblyCancelledFlightIds: [],
+    };
+  });
   return {
     state: {
       ...state,
-      routes: state.routes.filter((candidate) => candidate.id !== routeId),
-      fleet: state.fleet.map((ship) =>
-        ship.routeId === routeId ? { ...ship, routeId: null } : ship,
-      ),
+      routes: state.routes.map((candidate) => candidate.id === routeId ? { ...candidate, closingAfterRotation: true } : candidate),
+      pendingFleetChanges: [...state.pendingFleetChanges, ...changes],
     },
-    message: `已关闭“${route.name}”，船只已返还基地`,
+    message: `“${route.name}”已停止新增航班；${routeShips.length} 艘船将在完成当前往返后退出，不会瞬移`,
   };
 }
 
 function routeSchedule(route: Route, scenario: SimulationScenario): { departuresPerWeek: number; roundTripDays: number; dailyFlightHours: number } {
-  const shipType = scenario.shipTypes.find((ship) => ship.id === route.shipTypeId);
-  if (!shipType) return { departuresPerWeek: 0, roundTripDays: 0, dailyFlightHours: 0 };
-  const services = buildRouteServices(
-    { ...route, active: true },
-    shipType,
-    scenario.ports,
-    scenario.worldLegs,
+  const variants = scenario.routes.filter((candidate) =>
+    candidate.id === route.id || candidate.parentRouteId === route.id,
   );
-  const departuresPerWeek = services[0]?.departuresPerWeek ?? 0;
-  const roundTripDays = departuresPerWeek > 0
-    ? (7 * route.assignedShips * shipType.operationalAvailability) / departuresPerWeek
-    : 0;
-  const fleetDailyFlightHours = services.reduce(
-    (sum, service) => sum + service.inVehicleHours * service.departuresPerWeek / 7,
-    0,
-  );
-  const dailyFlightHours = fleetDailyFlightHours / Math.max(1, route.assignedShips);
+  const modeled = variants.flatMap((variant) => {
+    const shipType = scenario.shipTypes.find((ship) => ship.id === variant.shipTypeId);
+    if (!shipType) return [];
+    const services = buildRouteServices({ ...variant, active: true }, shipType, scenario.ports, scenario.worldLegs);
+    return [{ variant, shipType, services }];
+  });
+  const departuresPerWeek = modeled.reduce((sum, item) => sum + (item.services[0]?.departuresPerWeek ?? 0), 0);
+  const weightedRoundTripDays = modeled.reduce((sum, item) => {
+    const departures = item.services[0]?.departuresPerWeek ?? 0;
+    const days = departures > 0 ? 7 * item.variant.assignedShips * item.shipType.operationalAvailability / departures : 0;
+    return sum + days * item.variant.assignedShips;
+  }, 0);
+  const totalShips = modeled.reduce((sum, item) => sum + item.variant.assignedShips, 0);
+  const roundTripDays = weightedRoundTripDays / Math.max(1, totalShips);
+  const fleetDailyFlightHours = modeled.reduce((total, item) => total + item.services.reduce(
+    (sum, service) => sum + service.inVehicleHours * service.departuresPerWeek / 7, 0,
+  ), 0);
+  const dailyFlightHours = fleetDailyFlightHours / Math.max(1, totalShips);
   return { departuresPerWeek, roundTripDays, dailyFlightHours };
 }
 
@@ -1660,13 +2285,16 @@ function routeSummaries(
     });
     const directions = { outbound: emptyDirection(), return: emptyDirection() };
     const serviceModels = (() => {
-      const shipType = scenario.shipTypes.find((ship) => ship.id === route.shipTypeId);
-      if (!shipType) return [];
-      try {
-        return buildRouteServices({ ...route, active: true }, shipType, scenario.ports, scenario.worldLegs);
-      } catch {
-        return [];
-      }
+      return scenario.routes.filter((candidate) => candidate.id === route.id || candidate.parentRouteId === route.id)
+        .flatMap((variant) => {
+          const shipType = scenario.shipTypes.find((ship) => ship.id === variant.shipTypeId);
+          if (!shipType) return [];
+          try {
+            return buildRouteServices({ ...variant, active: true }, shipType, scenario.ports, scenario.worldLegs);
+          } catch {
+            return [];
+          }
+        });
     })();
     const serviceModelById = new Map(serviceModels.map((service) => [service.id, service]));
     for (const service of services) {
@@ -1699,9 +2327,20 @@ function routeSummaries(
     const revenue = services.reduce((sum, service) => sum + service.ticketRevenue, 0);
     const cost = costBreakdown.total;
     const profit = revenue - cost;
-    const onTimeRate = serviceModels.length > 0
-      ? serviceModels.reduce((sum, service) => sum + service.onTimeRate, 0) / serviceModels.length
-      : 0;
+    const routeFlights = state.scheduledFlights.filter((flight) =>
+      flight.routeId === route.id && Math.floor(flight.departureMinute / 1_440) === state.day,
+    );
+    const onTimeFlights = routeFlights.filter((flight) => {
+      if (flight.status === "cancelled") return false;
+      const plannedMinutes = flight.scheduledArrivalMinute - flight.scheduledDepartureMinute;
+      const threshold = Math.min(240, Math.max(60, plannedMinutes * 0.03));
+      return flight.delayMinutes <= threshold;
+    }).length;
+    const onTimeRate = routeFlights.length > 0
+      ? onTimeFlights / routeFlights.length
+      : serviceModels.length > 0
+        ? serviceModels.reduce((sum, service) => sum + service.onTimeRate, 0) / serviceModels.length
+        : 0;
     const loadFactorByClass = Object.fromEntries(PASSENGER_CLASSES.map((cabinClass) => [
       cabinClass,
       capacityByClass[cabinClass] > 0 ? passengersByClass[cabinClass] / capacityByClass[cabinClass] : 0,
@@ -1822,22 +2461,24 @@ function ageFleetAfterDay(
   state: GameState,
   scenario: SimulationScenario,
 ): OwnedShip[] {
-  const operationalRouteIds = new Set(
-    scenario.routes.filter((route) => route.companyId === "player").map((route) => route.id),
-  );
   return state.fleet.map((ship) => {
     if (ship.maintenanceUntilDay !== null) {
       return state.day + 1 >= ship.maintenanceUntilDay
         ? { ...ship, maintenanceUntilDay: null }
         : ship;
     }
-    if (!ship.routeId || !operationalRouteIds.has(ship.routeId)) return ship;
+    if (!ship.routeId) return ship;
     const route = state.routes.find((candidate) => candidate.id === ship.routeId);
     if (!route) return ship;
-    const flightHours = routeSchedule(route, scenario).dailyFlightHours;
+    const flights = state.scheduledFlights.filter((flight) => flight.shipId === ship.id && flight.status !== "cancelled" &&
+      Math.floor(flight.departureMinute / 1_440) === state.day);
+    const flightHours = flights.reduce((sum, flight) => sum + Math.max(0, flight.arrivalMinute - flight.departureMinute) / 60, 0);
+    const shipType = scenario.shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
+    const cruiseRatio = route.cruiseRatioByShipType?.[ship.shipTypeId] ?? 1;
+    const wearMultiplier = 1 + (shipType?.highSpeedMaintenancePenalty ?? 2.4) * Math.max(0, cruiseRatio - .9) ** 2;
     return {
       ...ship,
-      condition: Math.max(0, ship.condition - flightHours * CONDITION_WEAR_PER_FLIGHT_HOUR),
+      condition: Math.max(0, ship.condition - flightHours * CONDITION_WEAR_PER_FLIGHT_HOUR * wearMultiplier),
       flightHoursSinceMaintenance: ship.flightHoursSinceMaintenance + flightHours,
     };
   });
@@ -2095,7 +2736,17 @@ export function advanceGameDay(
   galaxy: GeneratedGalaxy,
 ): GameActionResult {
   requirePlaying(state);
-  const scenario = gameScenario(baseScenario, galaxy, state);
+  const dispatchedState = applyDueFleetChanges(state, state.day);
+  const currentSchedule = buildGameSchedule(dispatchedState, galaxy, baseScenario.shipTypes, 7, baseScenario.events);
+  const scheduledState: GameState = {
+    ...dispatchedState,
+    scheduledFlights: currentSchedule.flights,
+    shipLogs: [...dispatchedState.shipLogs, ...currentSchedule.shipLogs]
+      .filter((entry, index, entries) => entries.findIndex((candidate) => candidate.id === entry.id) === index)
+      .slice(-1_000),
+    starportCapacity: currentSchedule.starportCapacity,
+  };
+  const scenario = gameScenario(baseScenario, galaxy, scheduledState);
   const rawCampaignDay = simulateCampaign(scenario, {
     startDay: state.day,
     numberOfDays: 1,
@@ -2103,25 +2754,60 @@ export function advanceGameDay(
   const playerRouteIds = new Set(scenario.routes
     .filter((route) => route.companyId === "player")
     .map((route) => route.id));
-  const consumedUnits = rawCampaignDay.settlement.services
-    .filter((service) => playerRouteIds.has(service.serviceLegId.split(":")[0] ?? ""))
-    .reduce((sum, service) => sum + service.fuelUnitsConsumed, 0);
-  const automaticContract = applyAutomaticFuelContract(state, forecastWeeklyFuelDemand(state, consumedUnits));
+  const todayFlights = currentSchedule.flights.filter((flight) =>
+    flight.companyId === "player" && Math.floor(flight.departureMinute / 1_440) === scheduledState.day,
+  );
+  const operatedFlights = todayFlights.filter((flight) => flight.status !== "cancelled");
+  const consumedUnits = operatedFlights.reduce((sum, flight) => sum + flight.fuelUnits, 0);
+  const automaticContract = applyAutomaticFuelContract(scheduledState, forecastWeeklyFuelDemand(scheduledState, consumedUnits));
   const fuelSettlement = settleFuelDay(automaticContract.state, consumedUnits);
   const operatingState = fuelSettlement.state;
   const campaignDay = applyPlayerFuelCost(rawCampaignDay, scenario, fuelSettlement.effectiveUnitCost);
   const company = campaignDay.settlement.companies.find(
     (candidate) => candidate.companyId === "player",
   );
-  const revenue = company?.ticketRevenue ?? 0;
+  const grossRevenue = company?.ticketRevenue ?? 0;
+  const serviceModelById = new Map(scenario.routes.filter((route) => route.companyId === "player").flatMap((route) => {
+    const type = scenario.shipTypes.find((candidate) => candidate.id === route.shipTypeId);
+    if (!type) return [];
+    try { return buildRouteServices(route, type, scenario.ports, scenario.worldLegs).map((service) => [service.id, service] as const); }
+    catch { return []; }
+  }));
+  const routeDirectionRevenue = campaignDay.settlement.services
+    .filter((service) => playerRouteIds.has(service.serviceLegId.split(":")[0] ?? ""))
+    .reduce((map, service) => {
+      const routeId = service.serviceLegId.split(":")[0] ?? "";
+      const fromPortId = serviceModelById.get(service.serviceLegId)?.fromPortId ?? "unknown";
+      const key = `${routeId}:${fromPortId}`;
+      map.set(key, (map.get(key) ?? 0) + service.ticketRevenue);
+      return map;
+    }, new Map<string, number>());
+  const revenueForFlight = (flight: ScheduledFlight) => {
+    const actualFlights = operatedFlights.filter((candidate) => candidate.routeId === flight.routeId && candidate.fromPortId === flight.fromPortId).length;
+    const actualRevenue = routeDirectionRevenue.get(`${flight.routeId}:${flight.fromPortId}`) ?? 0;
+    if (actualFlights > 0) return actualRevenue / actualFlights;
+    const route = operatingState.routes.find((candidate) => candidate.id === flight.routeId);
+    const direction = route?.stops[0]?.portId === flight.fromPortId ? "outbound" : "return";
+    const fares = route?.pricing.directionalFareByClass?.[direction] ?? route?.pricing.fareByClass;
+    return fares ? PASSENGER_CLASSES.reduce((sum, cabinClass) => sum + fares[cabinClass] * flight.seatsByClass[cabinClass] * 0.7, 0) : 0;
+  };
+  const cancelledFlights = todayFlights.filter((flight) => flight.status === "cancelled");
+  const cancelledBookedRevenue = cancelledFlights.reduce((sum, flight) => sum + revenueForFlight(flight), 0);
+  const compensationPaid = operatedFlights.reduce((sum, flight) => sum + revenueForFlight(flight) * flight.compensationRate, 0) + cancelledBookedRevenue;
+  const revenue = grossRevenue + cancelledBookedRevenue - compensationPaid;
   const routeOperatingCost = company?.operatingCost ?? 0;
-  const operatingCost = routeOperatingCost + fuelSettlement.surplusSoldCost + fuelSettlement.warehouseRent;
-  const operationalRouteIds = new Set(scenario.routes.filter((route) => route.companyId === "player").map((route) => route.id));
-  const idleFleet = operatingState.fleet.filter((ship) => !ship.routeId || !operationalRouteIds.has(ship.routeId));
-  const idleFixedMaintenance = fleetFixedMaintenanceCost(idleFleet, baseScenario.shipTypes, operatingState.day);
-  const overhead = DAILY_COMPANY_OVERHEAD + idleFixedMaintenance.total;
+  const delayExtraCost = operatedFlights.reduce((sum, flight) => sum + flight.extraCrewCost + flight.extraPortCost, 0);
+  const operatingCost = routeOperatingCost + delayExtraCost + fuelSettlement.surplusSoldCost + fuelSettlement.warehouseRent;
+  const accountingNonCashOrEventMaintenance = campaignDay.settlement.services
+    .filter((service) => playerRouteIds.has(service.serviceLegId.split(":")[0] ?? ""))
+    .reduce((sum, service) => sum + service.costBreakdown.fixedMaintenance + service.costBreakdown.ageSurcharge +
+      service.costBreakdown.flightMaintenance + service.costBreakdown.depreciation, 0);
+  const cashRouteOperatingCost = Math.max(0, routeOperatingCost - accountingNonCashOrEventMaintenance);
+  const overhead = DAILY_COMPANY_OVERHEAD;
   const profit = revenue + fuelSettlement.surplusSaleRevenue - operatingCost - overhead;
-  const cash = operatingState.cash + profit + fuelSettlement.warehouseUsedValue +
+  const cashOperatingProfit = revenue + fuelSettlement.surplusSaleRevenue - cashRouteOperatingCost - delayExtraCost -
+    fuelSettlement.surplusSoldCost - fuelSettlement.warehouseRent - overhead;
+  const cash = operatingState.cash + cashOperatingProfit + fuelSettlement.warehouseUsedValue +
     fuelSettlement.contractDepositAmortized - fuelSettlement.warehouseStoredValue;
   const passengers = company?.passengers ?? 0;
   const totalPassengers =
@@ -2162,6 +2848,37 @@ export function advanceGameDay(
     ? operatingState.day
     : operatingState.primaryGoalCompletedOnDay;
   const lost = finalCash < 0 || (primaryGoalCompletedOnDay === null && nextDay >= DEADLINE_DAY);
+  const routeSummariesForDay = routeSummaries(operatingState, campaignDay, scenario);
+  const financialEvents: FlightFinancialEvent[] = [...operatingState.unsettledFinancialEvents, ...operatedFlights.flatMap((flight) => {
+    const shipType = baseScenario.shipTypes.find((type) => type.id === flight.shipTypeId);
+    const flightHours = Math.max(0, flight.arrivalMinute - flight.departureMinute) / 60;
+    const revenuePerFlight = revenueForFlight(flight);
+    const events: FlightFinancialEvent[] = [
+      { id: `${flight.id}:revenue`, minute: flight.departureMinute, flightId: flight.id, routeId: flight.routeId, kind: "ticket-revenue", amount: revenuePerFlight },
+      { id: `${flight.id}:fuel`, minute: flight.departureMinute - 5, flightId: flight.id, routeId: flight.routeId, kind: "fuel-purchase", amount: -flight.fuelUnits * fuelSettlement.effectiveUnitCost },
+    ];
+    if (shipType) {
+      events.push({ id: `${flight.id}:depreciation`, minute: flight.arrivalMinute, flightId: flight.id, routeId: flight.routeId, kind: "depreciation", amount: -shipType.purchasePrice / (8 * 364 * 24) * flightHours });
+    }
+    if (flight.compensationRate > 0) events.push({ id: `${flight.id}:compensation`, minute: flight.arrivalMinute, flightId: flight.id, routeId: flight.routeId, kind: "delay-compensation", amount: -revenuePerFlight * flight.compensationRate });
+    if (flight.extraCrewCost + flight.extraPortCost > 0) events.push({ id: `${flight.id}:delay-cost`, minute: flight.arrivalMinute, flightId: flight.id, routeId: flight.routeId, kind: "delay-extra-cost", amount: -(flight.extraCrewCost + flight.extraPortCost) });
+    return events;
+  })];
+  for (const flight of cancelledFlights) {
+    const booked = revenueForFlight(flight);
+    financialEvents.push(
+      { id: `${flight.id}:revenue`, minute: flight.scheduledDepartureMinute, flightId: flight.id, routeId: flight.routeId, kind: "ticket-revenue", amount: booked },
+      { id: `${flight.id}:compensation`, minute: flight.scheduledDepartureMinute, flightId: flight.id, routeId: flight.routeId, kind: "delay-compensation", amount: -booked },
+    );
+  }
+  if (automaticMaintenance.cost > 0) financialEvents.push({
+    id: `automatic-maintenance:${operatingState.day}`,
+    minute: operatingState.day * 1_440 + 1_435,
+    kind: "flight-maintenance",
+    amount: -automaticMaintenance.cost,
+  });
+  const staffCost = routeSummariesForDay.reduce((sum, route) => sum + route.costBreakdown.staff, 0);
+  financialEvents.push({ id: `payroll:${operatingState.day}`, minute: operatingState.day * 1_440 + 1_435, kind: "crew-payroll", amount: -staffCost });
   const record: GameDayRecord = {
     day: operatingState.day,
     cash: finalCash,
@@ -2189,15 +2906,47 @@ export function advanceGameDay(
     fuelEffectiveUnitCost: fuelSettlement.effectiveUnitCost,
     activeEventIds: campaignDay.activeEventIds,
     announcedEventIds: campaignDay.announcedEventIds,
-    routes: routeSummaries(operatingState, campaignDay, scenario),
+    routes: routeSummariesForDay,
+    flightsOperated: operatedFlights.length,
+    flightsCancelled: todayFlights.length - operatedFlights.length,
+    delayedFlights: operatedFlights.filter((flight) => flight.delayMinutes > 0).length,
+    compensationPaid,
+    financialEvents,
   };
+  const positionedFleet = automaticReplacement.state.fleet.map((ship) => {
+    const latestArrival = currentSchedule.flights
+      .filter((flight) => flight.shipId === ship.id && flight.arrivalMinute < nextDay * 1_440)
+      .sort((left, right) => right.arrivalMinute - left.arrivalMinute)[0];
+    return latestArrival ? { ...ship, currentPortId: latestArrival.toPortId } : ship;
+  });
+  const nextOperationalState = applyDueFleetChanges({
+    ...automaticReplacement.state,
+    day: nextDay,
+      routes: automaticReplacement.state.routes.map((route) => todayFlights.some((flight) => flight.routeId === route.id && flight.status !== "cancelled")
+        ? { ...route, confirmedLongTermSlots: true }
+        : route),
+    fleet: positionedFleet,
+  }, nextDay);
+  const punctuality = todayFlights.length > 0 ? todayFlights.filter((flight) => flight.onTime).length / todayFlights.length : 0.92;
+  const cancellationRate = todayFlights.length > 0 ? todayFlights.filter((flight) => flight.status === "cancelled").length / todayFlights.length : 0;
+  const reputationDelta = (punctuality - 0.85) * 1.2 - cancellationRate * 4;
+  const companyReputation = clamp(automaticReplacement.state.companyReputation + reputationDelta, 0, 100);
+  const localReputation = { ...automaticReplacement.state.localReputation };
+  for (const port of galaxy.ports) {
+    const portFlights = todayFlights.filter((flight) => flight.fromPortId === port.id || flight.toPortId === port.id);
+    if (portFlights.length === 0) continue;
+    const localOnTime = portFlights.filter((flight) => flight.onTime).length / portFlights.length;
+    const localCancelled = portFlights.filter((flight) => flight.status === "cancelled").length / portFlights.length;
+    localReputation[port.id] = clamp((localReputation[port.id] ?? companyReputation) + (localOnTime - 0.85) * 1.5 - localCancelled * 5, 0, 100);
+  }
+  const nextSchedule = buildGameSchedule(nextOperationalState, galaxy, baseScenario.shipTypes, 7, baseScenario.events);
   return {
     state: {
       ...operatingState,
       day: nextDay,
       cash: finalCash,
-      fleet: automaticReplacement.state.fleet,
-      routes: automaticReplacement.state.routes,
+      fleet: nextOperationalState.fleet,
+      routes: nextOperationalState.routes,
       shipPurchaseOrders: automaticReplacement.state.shipPurchaseOrders,
       nextShipNumber: delivery.state.nextShipNumber,
       nextPurchaseAgreementNumber: automaticReplacement.state.nextPurchaseAgreementNumber,
@@ -2206,6 +2955,13 @@ export function advanceGameDay(
       fuelMarket: [...operatingState.fuelMarket, fuelPriceRecord(galaxy, nextDay)].slice(-360),
       status: lost ? "lost" : "playing",
       primaryGoalCompletedOnDay,
+      pendingFleetChanges: nextOperationalState.pendingFleetChanges,
+      companyReputation,
+      localReputation,
+      unsettledFinancialEvents: [],
+      scheduledFlights: nextSchedule.flights,
+      starportCapacity: nextSchedule.starportCapacity,
+      shipLogs: scheduledState.shipLogs,
     },
     message: replacedCount > 0
       ? `船厂今日交付并自动替换 ${replacedCount} 艘到龄舰船；航线与客舱方案已转移到新船。`
@@ -2216,7 +2972,7 @@ export function advanceGameDay(
       : deliveredCount > 0
       ? `船厂今日交付 ${deliveredCount} 艘舰船；请为新船分配统一配置方案。`
       : automaticContract.signedWeeklyUnits > 0
-      ? `油价达到自动签约条件，已新增每周 ${automaticContract.signedWeeklyUnits.toFixed(0)} FU 的燃料合约并支付定金。`
+      ? `燃料价格达到自动签约条件，已新增每周 ${automaticContract.signedWeeklyUnits.toFixed(0)} FU 的燃料合约并支付定金。`
       : automaticMaintenance.maintainedShipNames.length > 0
       ? `${automaticMaintenance.maintainedShipNames.join("、")} 返抵主基地，维护值已低于 ${state.autoMaintenanceThreshold}% 阈值并自动进场维护。`
       : justCompletedGoal

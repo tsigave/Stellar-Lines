@@ -72,13 +72,20 @@ export function CompanyPanel({
           const shipType = shipTypes.find((ship) => ship.id === route.shipTypeId);
           const ownedShip = game.fleet.find((ship) => ship.routeId === route.id);
           const maintenance = ownedShip ? shipMaintenanceState(ownedShip, game.day) : "required";
-          const operationalState = !route.active
+          const operationalState = route.closingAfterRotation
+            ? "完成往返后关闭"
+            : !route.active
             ? "暂停"
             : maintenance === "maintenance"
               ? "维护中"
               : maintenance === "required"
                 ? "维护停航"
                 : "运营";
+          const upcomingFlights = game.scheduledFlights.filter((flight) => flight.routeId === route.id &&
+            flight.departureMinute >= game.day * 1_440 && flight.departureMinute < (game.day + 7) * 1_440);
+          const cancelled = upcomingFlights.filter((flight) => flight.status === "cancelled").length;
+          const delayed = upcomingFlights.filter((flight) => flight.delayMinutes > flight.onTimeThresholdMinutes).length;
+          const replaced = upcomingFlights.filter((flight) => !!flight.replacementShipId).length;
           return (
             <article className={route.active ? "route-card" : "route-card paused"} key={route.id}>
               <div className="route-card-heading">
@@ -103,6 +110,7 @@ export function CompanyPanel({
                 <span>头等 {((summary?.loadFactorByClass.premium ?? 0) * 100).toFixed(0)}%</span>
               </div>
               {(summary?.warnings.length ?? 0) > 0 && <div className="route-warning">⚠ {summary!.warnings.join(" · ")}</div>}
+              <div className={cancelled > 0 ? "route-warning" : "route-card-meta"}>未来七日：{upcomingFlights.length} 班 · 非准点 {delayed} · 取消 {cancelled} · 替代船 {replaced}</div>
               <div className="route-actions">
                 <button className="route-detail-button" onClick={() => onOpenRoute(route.id)}>经营详情</button>
                 <button onClick={() => onToggleRoute(route.id)}>{route.active ? "暂停" : "恢复"}</button>

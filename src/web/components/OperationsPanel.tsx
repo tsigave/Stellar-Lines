@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   buildRouteServices,
+  buildGameSchedule,
   fleetConfigurationForShip,
   gameWorldLegs,
   recommendRouteFares,
@@ -58,8 +59,6 @@ export function OperationsPanel({
   const selectedShipTypes = selectedShips
     .map((ship) => shipTypes.find((type) => type.id === ship.shipTypeId))
     .filter((type): type is ShipType => !!type);
-  const selectedSpeed = selectedShipTypes[0]?.speedByMode[routingMode];
-  const selectedShipTypeId = selectedShipTypes[0]?.id;
   const modeCompatibleShips = availableShips.filter((ship) => {
     const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
     return !!type?.supportedModes.includes(routingMode);
@@ -67,9 +66,7 @@ export function OperationsPanel({
   const isShipCompatible = (shipId: string) => {
     const ship = availableShips.find((candidate) => candidate.id === shipId);
     const type = shipTypes.find((candidate) => candidate.id === ship?.shipTypeId);
-    return !!type && type.supportedModes.includes(routingMode) &&
-      (selectedSpeed === undefined || type.speedByMode[routingMode] === selectedSpeed) &&
-      (selectedShipTypeId === undefined || type.id === selectedShipTypeId);
+    return !!type && type.supportedModes.includes(routingMode);
   };
 
   useEffect(() => {
@@ -121,24 +118,53 @@ export function OperationsPanel({
       },
       maintenanceAllowanceHours: 0,
       active: true,
+      cruiseRatioByShipType: Object.fromEntries(selectedShipTypes.map((type) => [type.id, 1])),
+      sublightTargetSpeedKmPerSecondByShipType: Object.fromEntries(selectedShipTypes.map((type) => [type.id, Math.min(80, type.maximumSublightSpeedKmPerSecond ?? 80)])),
+      sublightThrustRatioByShipType: Object.fromEntries(selectedShipTypes.map((type) => [type.id, type.fuelOptimalThrustRatio ?? .72])),
+      scheduleBufferMinutes: 30,
+      directionalPricingLinked: true,
+      slotApplicationDay: game.day,
     };
     try {
-      const services = buildRouteServices(route, selectedShipType, galaxy.ports, gameWorldLegs(galaxy));
-      const recommendations = recommendRouteFares(route.id, services);
-      const departuresPerWeek = services[0]?.departuresPerWeek ?? 0;
+      const typeGroups = [...new Set(selectedShips.map((ship) => ship.shipTypeId))].map((shipTypeId, index) => {
+        const type = shipTypes.find((candidate) => candidate.id === shipTypeId)!;
+        const ships = selectedShips.filter((ship) => ship.shipTypeId === shipTypeId);
+        const configurations = ships.map((ship) => fleetConfigurationForShip(game, ship)!);
+        const cabins: CabinConfiguration = {
+          economy: configurations.reduce((sum, item) => sum + item.cabins.economy, 0) / ships.length,
+          business: configurations.reduce((sum, item) => sum + item.cabins.business, 0) / ships.length,
+          premium: configurations.reduce((sum, item) => sum + item.cabins.premium, 0) / ships.length,
+        };
+        const variant = { ...route, id: `${route.id}:${index}`, shipTypeId, assignedShips: ships.length, cabinCapacityByClass: cabins };
+        return buildRouteServices(variant, type, galaxy.ports, gameWorldLegs(galaxy));
+      });
+      const services = typeGroups.flat();
+      const recommendations = recommendRouteFares(services[0]?.routeId ?? route.id, typeGroups[0] ?? []);
+      const departuresPerWeek = typeGroups.reduce((sum, group) => sum + (group[0]?.departuresPerWeek ?? 0), 0);
+      const schedule = buildGameSchedule({
+        ...game,
+        routes: [...game.routes, route],
+        fleet: game.fleet.map((ship) => selectedShipIds.includes(ship.id) ? { ...ship, routeId: route.id } : ship),
+      }, galaxy, shipTypes, 14);
+      const previewFlights = schedule.flights.filter((flight) => flight.routeId === route.id);
+      const endpointCapacity = schedule.starportCapacity.filter((entry) => entry.portId === game.basePortId || entry.portId === destinationPortId);
       return {
         error: null,
         departuresPerWeek,
         roundTripDays: departuresPerWeek > 0
-          ? 7 * selectedShipIds.length * selectedShipType.operationalAvailability / departuresPerWeek
+          ? typeGroups.reduce((sum, group) => sum + (group[0]?.destinationDwellHours ?? 0), 0) / Math.max(1, typeGroups.length) / 24
           : 0,
         oneWayHours: services[0]?.inVehicleHours ?? 0,
-        seats: services[0]?.seatsPerDeparture ?? 0,
-        fuelEmpty: services[0]?.fuelConsumptionPerDepartureEmpty ?? 0,
-        fuelFull: services[0]?.fuelConsumptionPerDepartureFull ?? 0,
-        fuelLoadEmpty: services[0]?.fuelLoadPerDepartureEmpty ?? 0,
-        fuelLoadFull: services[0]?.fuelLoadPerDepartureFull ?? 0,
+        seats: services.reduce((sum, service) => sum + service.dailySeatCapacity, 0),
+        fuelEmpty: services.reduce((sum, service) => sum + (service.fuelConsumptionPerDepartureEmpty ?? 0), 0),
+        fuelFull: services.reduce((sum, service) => sum + (service.fuelConsumptionPerDepartureFull ?? 0), 0),
+        fuelLoadEmpty: services.reduce((sum, service) => sum + (service.fuelLoadPerDepartureEmpty ?? 0), 0),
+        fuelLoadFull: services.reduce((sum, service) => sum + (service.fuelLoadPerDepartureFull ?? 0), 0),
         recommendations,
+        slotMovements: previewFlights.filter((flight) => flight.status !== "cancelled").length * 2,
+        cancelledFlights: previewFlights.filter((flight) => flight.status === "cancelled").length,
+        shiftedFlights: previewFlights.filter((flight) => flight.departureSlotStatus !== "confirmed" || flight.arrivalSlotStatus !== "confirmed").length,
+        peakCongestion: endpointCapacity.reduce((maximum, entry) => Math.max(maximum, entry.utilization), 0),
       };
     } catch (caught) {
       return {
@@ -152,9 +178,13 @@ export function OperationsPanel({
         fuelLoadEmpty: 0,
         fuelLoadFull: 0,
         recommendations: null,
+        slotMovements: 0,
+        cancelledFlights: 0,
+        shiftedFlights: 0,
+        peakCongestion: 0,
       };
     }
-  }, [averageCabins, destinationPortId, fares, galaxy, game.basePortId, routingMode, selectedShipIds.length, selectedShipTypes]);
+  }, [averageCabins, destinationPortId, fares, galaxy, game, routingMode, selectedShipIds.length, selectedShipTypes, shipTypes]);
 
   const toggleShip = (shipId: string) => {
     setSelectedShipIds((current) => current.includes(shipId)
@@ -187,6 +217,7 @@ export function OperationsPanel({
         <span>基地</span><strong>{basePort?.name}</strong>
         <i>→</i>
         <span>目的地</span><strong>{destinationPort?.name}</strong>
+        <small>跃出点距离：基地 {((routingMode === "hyperspace" ? basePort?.hyperspaceExitDistanceKm : basePort?.warpExitDistanceKm) ?? 0).toLocaleString()} km · 目的地 {((routingMode === "hyperspace" ? destinationPort?.hyperspaceExitDistanceKm : destinationPort?.warpExitDistanceKm) ?? 0).toLocaleString()} km</small>
       </div>
 
       <label className="field-label" htmlFor="route-destination">目的星港</label>
@@ -227,8 +258,8 @@ export function OperationsPanel({
           );
         })}
       </div>
-      {selectedSpeed !== undefined && (
-        <div className="route-fleet-rule">统一{MODE_LABELS[routingMode]}速度：{selectedSpeed} 光年/日</div>
+      {selectedShipTypes.length > 0 && (
+        <div className="route-fleet-rule">混合型号将按各自速度、舱位和周转时间独立生成航班：{[...new Set(selectedShipTypes.map((type) => `${type.name} ${type.speedByMode[routingMode]} 光年/日`))].join(" · ")}</div>
       )}
 
       <label className="field-label" htmlFor="route-name">航线名称</label>
@@ -268,13 +299,16 @@ export function OperationsPanel({
           <span>往返周期<strong>{preview.roundTripDays.toFixed(1)} 日</strong></span>
           <span>每班座位<strong>{preview.seats.toFixed(0)}</strong></span>
           <span>计划班次<strong>{preview.departuresPerWeek.toFixed(1)} / 周</strong></span>
-          <span>空载耗油 / 装油<strong>{preview.fuelEmpty.toFixed(1)} / {preview.fuelLoadEmpty.toFixed(1)}</strong></span>
-          <span>满载耗油 / 装油<strong>{preview.fuelFull.toFixed(1)} / {preview.fuelLoadFull.toFixed(1)}</strong></span>
+          <span>空载燃料消耗 / 燃料载荷<strong>{preview.fuelEmpty.toFixed(1)} / {preview.fuelLoadEmpty.toFixed(1)}</strong></span>
+          <span>满载燃料消耗 / 燃料载荷<strong>{preview.fuelFull.toFixed(1)} / {preview.fuelLoadFull.toFixed(1)}</strong></span>
+          <span>十四日所需时隙<strong>{preview.slotMovements} movements</strong></span>
+          <span>换时刻 / 取消<strong>{preview.shiftedFlights} / {preview.cancelledFlights}</strong></span>
+          <span>端点峰值拥堵<strong>{(preview.peakCongestion * 100).toFixed(0)}%</strong></span>
         </div>
       )}
       {preview?.error && <div className="route-preview-error">{preview.error}</div>}
 
-      <button className="primary-action" disabled={selectedShipIds.length === 0 || !preview || !!preview.error || game.status !== "playing"} onClick={submit}>
+      <button className="primary-action" disabled={selectedShipIds.length === 0 || !preview || !!preview.error || preview.cancelledFlights > 0 || game.status !== "playing"} onClick={submit}>
         <span>开通航线</span><small>{formatCredits(ROUTE_OPENING_COST)}</small>
       </button>
     </section>

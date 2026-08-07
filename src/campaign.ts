@@ -45,6 +45,9 @@ export function simulateCampaign(
       return buildRouteServices(route, ship, currentPorts, currentWorldLegs, {
         companyReputation: scenario.companyReputation[route.companyId] ?? 50,
         shipCondition: scenario.shipConditionByRoute?.[route.id] ?? 100,
+        ...(scenario.onTimeRateByRoute?.[route.parentRouteId ?? route.id] !== undefined
+          ? { onTimeRate: scenario.onTimeRateByRoute[route.parentRouteId ?? route.id]! }
+          : {}),
       });
     });
     const markets = generateMarketDemands(scenario.ports, referenceTimes, {

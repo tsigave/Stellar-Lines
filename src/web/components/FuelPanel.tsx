@@ -140,7 +140,7 @@ export function FuelPanel({
             <div className="fuel-price-history-controls">
               <label>查看周期
                 <select
-                  aria-label="油价记录查看周期"
+                  aria-label="燃料价格记录查看周期"
                   value={priceHistoryDays}
                   onChange={(event) => {
                     setPriceHistoryDays(Number(event.target.value));

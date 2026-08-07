@@ -419,10 +419,17 @@ export function GalaxyMap({
               const from = fromPort ? systemsById.get(fromPort.systemId) : undefined;
               const to = toPort ? systemsById.get(toPort.systemId) : undefined;
               if (!from || !to) return null;
+              const routeFlights = game.scheduledFlights.filter((flight) => flight.routeId === route.id &&
+                flight.departureMinute >= game.day * 1_440 && flight.departureMinute < (game.day + 7) * 1_440);
+              const cancelled = routeFlights.filter((flight) => flight.status === "cancelled").length;
+              const delayed = routeFlights.filter((flight) => !flight.onTime && flight.status !== "cancelled").length;
+              const replacements = routeFlights.filter((flight) => !!flight.replacementShipId).length;
+              const liveStatus = `未来七日 ${routeFlights.length} 班 · 晚点 ${delayed} · 取消 ${cancelled} · 替代 ${replacements}`;
+              const alertClass = cancelled > 0 ? " route-capacity-alert" : delayed > 0 ? " route-delay-alert" : "";
               if (route.routingMode === "warp") {
                 return [(
-                  <line key={route.id} className="player-route-line player-warp-route" x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7}>
-                    <title>{route.name} · 曲率直达</title>
+                  <line key={route.id} className={`player-route-line player-warp-route${alertClass}`} x1={from.x * 10} y1={from.y * 7} x2={to.x * 10} y2={to.y * 7}>
+                    <title>{route.name} · 曲率直达 · {liveStatus}</title>
                   </line>
                 )];
               }
@@ -430,8 +437,8 @@ export function GalaxyMap({
                 const segmentFrom = systemsById.get(lane.fromSystemId)!;
                 const segmentTo = systemsById.get(lane.toSystemId)!;
                 return (
-                  <line key={`${route.id}-${index}`} className="player-route-line player-hyper-route" x1={segmentFrom.x * 10} y1={segmentFrom.y * 7} x2={segmentTo.x * 10} y2={segmentTo.y * 7}>
-                    <title>{route.name} · 超空间航路</title>
+                  <line key={`${route.id}-${index}`} className={`player-route-line player-hyper-route${alertClass}`} x1={segmentFrom.x * 10} y1={segmentFrom.y * 7} x2={segmentTo.x * 10} y2={segmentTo.y * 7}>
+                    <title>{route.name} · 超空间航路 · {liveStatus}</title>
                   </line>
                 );
               });

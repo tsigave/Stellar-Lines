@@ -1,4 +1,5 @@
 import { PROOF_OF_CONCEPT_SHIPS } from "../scenarios/proof-of-concept.js";
+import { deterministicExitDistanceKm } from "../fuel.js";
 import type {
   EconomyType,
   GalaxyGenerationConfig,
@@ -306,6 +307,8 @@ function createPort(
     dailyCapacity: isHub ? random.integer(2_400, 5_600) : random.integer(500, 2_100),
     fuelPrice: Number((1.8 + random.next() * 1.8).toFixed(2)),
     serviceFee: random.integer(isHub ? 105 : 55, isHub ? 185 : 125),
+    hyperspaceExitDistanceKm: deterministicExitDistanceKm(system.id, "hyperspace"),
+    warpExitDistanceKm: deterministicExitDistanceKm(system.id, "warp"),
   };
 }
 

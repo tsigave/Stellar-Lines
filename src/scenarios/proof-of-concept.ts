@@ -8,6 +8,7 @@ import type {
   TravelMode,
   WorldLeg,
 } from "../types.js";
+import { deterministicExitDistanceKm } from "../fuel.js";
 
 type PortValues = Pick<
   Starport,
@@ -28,7 +29,11 @@ function port(
   name: string,
   values: PortValues,
 ): Starport {
-  return { id, systemId, name, ...values };
+  return {
+    id, systemId, name, ...values,
+    hyperspaceExitDistanceKm: deterministicExitDistanceKm(systemId, "hyperspace"),
+    warpExitDistanceKm: deterministicExitDistanceKm(systemId, "warp"),
+  };
 }
 
 export const PROOF_OF_CONCEPT_PORTS: readonly Starport[] = [
@@ -301,7 +306,7 @@ function familyVariant(
  * 同系列子型号继承基础型号的大部分驱动、可靠性与维护参数，只调整容量、
  * 结构质量、设计航程和面向市场，体现平台化造船而非互不相关的船型堆叠。
  */
-export const PROOF_OF_CONCEPT_SHIPS: readonly ShipType[] = [
+const SHIP_CATALOG: readonly ShipType[] = [
   ...CORE_PROOF_OF_CONCEPT_SHIPS,
   familyVariant("sparrow-shuttle", {
     id: "sparrow-shuttle-s18", name: "麻雀 S18型", variant: "S18", seats: 18, cabinSpace: 18,
@@ -418,6 +423,22 @@ export const PROOF_OF_CONCEPT_SHIPS: readonly ShipType[] = [
     description: "奥德赛卧铺的远程大容量型号，为长距离夜航提供更多私人空间。",
   }),
 ];
+
+export const PROOF_OF_CONCEPT_SHIPS: readonly ShipType[] = SHIP_CATALOG.map((ship, index) => ({
+  ...ship,
+  minimumCruiseRatio: 0.7,
+  maximumCruiseRatio: 1.1,
+  fuelOptimalCruiseRatio: Number((0.76 + (index % 6) * 0.025).toFixed(3)),
+    sublightSpecificImpulseSeconds: 3_800_000 + (index % 8) * 520_000,
+  interstellarEfficiencyLyPerFuelTonneMass: 1_050 + (index % 7) * 180,
+  sublightThrustMN: Number((Math.max(2, ship.structuralMassTonnes * (0.01 + (index % 5) * 0.0015))).toFixed(2)),
+  maximumSublightSpeedKmPerSecond: 75 + (index % 8) * 15,
+  fuelOptimalThrustRatio: Number((0.62 + (index % 5) * 0.055).toFixed(3)),
+  slowFuelPenaltyCoefficient: 2.4 + (index % 3) * 0.45,
+  fastFuelPenaltyCoefficient: 5.8 + (index % 4) * 0.7,
+  highSpeedMaintenancePenalty: 1.8 + (index % 4) * 0.35,
+  highSpeedReliabilityPenalty: 0.12 + (index % 5) * 0.025,
+}));
 
 const standardPricing: RoutePricing = {
   multiplier: 1,

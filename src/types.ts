@@ -31,6 +31,9 @@ export interface Starport {
   dailyCapacity: number;
   fuelPrice: number;
   serviceFee: number;
+  /** 从两类星际航行退出点到星港的确定性实体空间距离。 */
+  hyperspaceExitDistanceKm?: number;
+  warpExitDistanceKm?: number;
 }
 
 export interface StarSystem {
@@ -197,6 +200,21 @@ export interface ShipType {
   minimumPortLevel: 1 | 2 | 3 | 4 | 5;
   turnaroundHours: number;
   operationalAvailability: number;
+  /** v0.6 巡航包线；未提供时按 70%–110%、燃料最佳 82% 处理。 */
+  minimumCruiseRatio?: number;
+  maximumCruiseRatio?: number;
+  fuelOptimalCruiseRatio?: number;
+  /** 亚光速比冲与星际航行效率，供精细任务模型和 UI 展示。 */
+  sublightSpecificImpulseSeconds?: number;
+  interstellarEfficiencyLyPerFuelTonneMass?: number;
+  /** 亚光速主推进器额定推力；speedByMode.sublight 仅保留旧存档兼容。 */
+  sublightThrustMN?: number;
+  maximumSublightSpeedKmPerSecond?: number;
+  fuelOptimalThrustRatio?: number;
+  slowFuelPenaltyCoefficient?: number;
+  fastFuelPenaltyCoefficient?: number;
+  highSpeedMaintenancePenalty?: number;
+  highSpeedReliabilityPenalty?: number;
 }
 
 export interface RouteStop {
@@ -210,6 +228,8 @@ export interface RoutePricing {
   passengerClassMultiplier: Record<PassengerClass, number>;
   /** 玩家设置的单程绝对票价；未提供时使用旧版倍率定价。 */
   fareByClass?: Record<PassengerClass, number>;
+  /** 去程/回程可独立定价；缺省时继续使用 fareByClass。 */
+  directionalFareByClass?: Partial<Record<"outbound" | "return", Record<PassengerClass, number>>>;
 }
 
 export interface RouteEconomics {
@@ -221,6 +241,8 @@ export interface RouteEconomics {
 
 export interface Route {
   id: string;
+  /** 由混合舰队拆出的结算子航线仍归属同一玩家航线。 */
+  parentRouteId?: string;
   companyId: string;
   name: string;
   kind: "return" | "loop";
@@ -236,6 +258,21 @@ export interface Route {
   economics?: RouteEconomics;
   maintenanceAllowanceHours: number;
   active: boolean;
+  closingAfterRotation?: boolean;
+  /** 每个实际型号独立设置巡航比例。 */
+  cruiseRatioByShipType?: Readonly<Record<string, number>>;
+  /** 自动均匀排班以外，可保存一周内（0–10075）的五分钟发车模板。 */
+  weeklyDepartureMinutes?: readonly number[];
+  scheduleBufferMinutes?: number;
+  sublightTargetSpeedKmPerSecondByShipType?: Readonly<Record<string, number>>;
+  sublightThrustRatioByShipType?: Readonly<Record<string, number>>;
+  directionalPricingLinked?: boolean;
+  /** 时隙申请参数：已确认长期时隙最高优先，其余按有限基地优势、费用、历史与申请时间排序。 */
+  confirmedLongTermSlots?: boolean;
+  slotBidPerMovement?: number;
+  slotApplicationDay?: number;
+  /** 由实际班表回填的有效周班次，仅用于结算模型。 */
+  operationalDeparturesPerWeek?: number;
 }
 
 export interface ServiceLeg {
@@ -268,6 +305,11 @@ export interface ServiceLeg {
   satisfactionByPassengerType?: Record<PassengerType, number>;
   baseCostBreakdown?: RouteCostBreakdown;
   dailyOperatingCost: number;
+  scheduledDepartureMinutes?: readonly number[];
+  scheduleQuality?: number;
+  sublightHours?: number;
+  sublightFuelUnits?: number;
+  interstellarFuelUnits?: number;
 }
 
 export interface JourneyOption {
@@ -442,6 +484,7 @@ export interface SimulationScenario {
   routes: readonly Route[];
   companyReputation: Readonly<Record<string, number>>;
   shipConditionByRoute?: Readonly<Record<string, number>>;
+  onTimeRateByRoute?: Readonly<Record<string, number>>;
   events: readonly MarketEvent[];
 }
 

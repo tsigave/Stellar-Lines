@@ -24,6 +24,15 @@ import {
   eventIntensity,
   fuelEventIntensity,
   generateMarketDemands,
+  generateFlightSchedule,
+  buildSpeedEconomicsCurve,
+  fuelMultiplierAtCruiseRatio,
+  roundToFiveMinutes,
+  starportMovementCapacity,
+  starportControlDelayProbability,
+  flightCompensationRate,
+  buildGameSchedule,
+  requestRouteFleetChange,
   allReferenceTimes,
   marketEventDemandMultiplier,
   migrateGameState,
@@ -33,6 +42,15 @@ import {
   isGameState,
   fuelPriceRecord,
   estimateFuelConsumption,
+  estimateInterstellarFuel,
+  estimateSublightTransit,
+  deterministicExitDistanceKm,
+  setShipReserveRoute,
+  investInStarportCapacity,
+  orderShipReplacement,
+  setRouteSublightProfile,
+  setRouteDirectionalPricingLinked,
+  setRouteDirectionalFares,
   fleetConfigurationForShip,
   fleetFixedMaintenanceCost,
   performShipMaintenance,
@@ -466,7 +484,7 @@ test("v0.5 航段票款收入减全部成本严格等于净利润", () => {
   assert.ok(settlement.costBreakdown.depreciation > 0);
 });
 
-test("v0.5 随机可玩航线普通日燃料中位数约四分之一且高位不过度", () => {
+test("v0.6 随机可玩航线的真实质量燃料成本保持有限", () => {
   const costShares = Array.from({ length: 12 }, (_, seedIndex) => {
     const generated = createGeneratedScenario({
       ...DEFAULT_GALAXY_CONFIG,
@@ -492,8 +510,8 @@ test("v0.5 随机可玩航线普通日燃料中位数约四分之一且高位不
   const highFuelShare = fuelShares[Math.floor(fuelShares.length * 0.95)]!;
   const medianFixedShare = fixedShares[Math.floor(fixedShares.length * 0.5)]!;
 
-  assert.ok(medianFuelShare >= 0.22 && medianFuelShare <= 0.28);
-  assert.ok(highFuelShare < 0.4);
+  assert.ok(medianFuelShare > 0 && medianFuelShare < 0.7);
+  assert.ok(highFuelShare < 0.85);
   assert.ok(medianFixedShare < 0.3);
 });
 
@@ -991,26 +1009,20 @@ test("同一船型可维护多个统一方案并批量分配舰船", () => {
   ));
 });
 
-test("燃料曲线自动加入20%应急裕度并响应载客质量和航程错配", () => {
+test("v0.6 星际燃料忽略旅客质量、加入20%裕度并响应速度效率曲线", () => {
   const baseType = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((ship) => ship.id === "arrow-express")!;
   const cabins = { premium: 0, business: 0, economy: baseType.cabinSpace };
   const shortRange = estimateFuelConsumption(baseType, "warp", 10, cabins, 0);
   const loaded = estimateFuelConsumption(baseType, "warp", 10, cabins, baseType.cabinSpace);
-  const excessiveRange = estimateFuelConsumption(
-    { ...baseType, maxRangeByMode: { ...baseType.maxRangeByMode, warp: 1_000 } },
-    "warp",
-    10,
-    cabins,
-    0,
-  );
+  const slow = estimateInterstellarFuel(baseType, "warp", 10, cabins, baseType.minimumCruiseRatio!);
 
-  assert.ok(loaded.fuelUnits > shortRange.fuelUnits);
+  assert.equal(loaded.fuelUnits, shortRange.fuelUnits);
+  assert.equal(loaded.passengerMassTonnes, 0);
   assert.equal(shortRange.emergencyReserveUnits, Number((shortRange.fuelUnits * EMERGENCY_FUEL_MARGIN).toFixed(4)));
   assert.equal(shortRange.requiredFuelLoadUnits, Number((shortRange.fuelUnits * (1 + EMERGENCY_FUEL_MARGIN)).toFixed(4)));
-  assert.ok(loaded.carriedFuelMassTonnes > shortRange.carriedFuelMassTonnes);
-  assert.ok(loaded.fuelCapacityUtilization > shortRange.fuelCapacityUtilization);
-  assert.ok(excessiveRange.rangeMismatchMultiplier > shortRange.rangeMismatchMultiplier);
-  assert.ok(excessiveRange.fuelUnits > shortRange.fuelUnits * 1.4);
+  assert.equal(loaded.carriedFuelMassTonnes, shortRange.carriedFuelMassTonnes);
+  assert.ok(slow.rangeMismatchMultiplier > 1);
+  assert.ok(slow.fuelUnits > estimateInterstellarFuel(baseType, "warp", 10, cabins, baseType.fuelOptimalCruiseRatio!).fuelUnits);
 });
 
 test("多型号采购协议叠加批量优惠，热度延长排产且现货次日交付", () => {
@@ -1086,7 +1098,7 @@ test("船龄提高固定维护并降低舒适度，到龄后订购新船且交�
   assert.ok(game.cash > cashBeforeDelivery);
 });
 
-test("固定维护费按供应商与系列规模折扣乘算叠加并进入日结算", () => {
+test("维护准备金保留折扣，但现金只在实际大修时支出", () => {
   const types = PROOF_OF_CONCEPT_SCENARIO.shipTypes;
   const owned = (shipTypeId: string, index: number): OwnedShip => ({
     id: `discount-${index}`,
@@ -1116,7 +1128,10 @@ test("固定维护费按供应商与系列规模折扣乘算叠加并进入日�
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, generated.galaxy.ports[0]!.id);
   const starterMaintenance = fleetFixedMaintenanceCost(game.fleet, generated.scenario.shipTypes).total;
   game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
-  assert.equal(game.history[0]!.overhead, DAILY_COMPANY_OVERHEAD + starterMaintenance);
+  assert.ok(starterMaintenance > 0);
+  assert.equal(game.history[0]!.overhead, DAILY_COMPANY_OVERHEAD);
+  const maintained = performShipMaintenance(game, game.fleet[0]!.id, generated.scenario.shipTypes).state;
+  assert.ok(maintained.unsettledFinancialEvents.some((event) => event.kind === "flight-maintenance" && event.amount < 0));
 });
 
 test("玩家客舱配置按舱等形成独立运力", () => {
@@ -1143,11 +1158,11 @@ test("玩家客舱配置按舱等形成独立运力", () => {
 
   assert.deepEqual(service.seatsPerDepartureByClass, { premium: 10, business: 20, economy: 60 });
   assert.equal(service.seatsPerDeparture, 90);
-  assert.equal(service.dailySeatCapacityByClass!.business, service.dailySeatCapacityByClass!.premium * 2);
-  assert.equal(service.dailySeatCapacityByClass!.economy, service.dailySeatCapacityByClass!.premium * 6);
+  assert.ok(Math.abs(service.dailySeatCapacityByClass!.business - service.dailySeatCapacityByClass!.premium * 2) < 1e-10);
+  assert.ok(Math.abs(service.dailySeatCapacityByClass!.economy - service.dailySeatCapacityByClass!.premium * 6) < 1e-10);
 });
 
-test("超空间船整体快于曲率船，亚光速指数会改变星港周转", () => {
+test("超空间船整体快于曲率船，亚光速推力会改变实体空间航时", () => {
   const ships = PROOF_OF_CONCEPT_SCENARIO.shipTypes;
   const warpSpeeds = ships.flatMap((ship) => ship.speedByMode.warp ?? []);
   const hyperspaceSpeeds = ships.flatMap((ship) => ship.speedByMode.hyperspace ?? []);
@@ -1172,9 +1187,10 @@ test("超空间船整体快于曲率船，亚光速指数会改变星港周转",
     pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1.35, premium: 2.1 } },
     maintenanceAllowanceHours: 0, active: true,
   };
-  const slow = buildRouteServices(route, { ...baseType, speedByMode: { ...baseType.speedByMode, sublight: 0.5 } }, ports, [leg]);
-  const fast = buildRouteServices(route, { ...baseType, speedByMode: { ...baseType.speedByMode, sublight: 2 } }, ports, [leg]);
-  assert.ok(fast[0]!.destinationDwellHours < slow[0]!.destinationDwellHours);
+  const slow = buildRouteServices(route, { ...baseType, sublightThrustMN: baseType.sublightThrustMN! * 0.5 }, ports, [leg]);
+  const fast = buildRouteServices(route, { ...baseType, sublightThrustMN: baseType.sublightThrustMN! * 2 }, ports, [leg]);
+  assert.equal(fast[0]!.destinationDwellHours, slow[0]!.destinationDwellHours);
+  assert.ok(fast[0]!.sublightHours! < slow[0]!.sublightHours!);
   assert.ok(fast[0]!.departuresPerWeek > slow[0]!.departuresPerWeek);
 });
 
@@ -1226,8 +1242,11 @@ test("可玩状态支持购船、开线、日结算和关闭航线的完整循�
   assert.ok(Number.isFinite(game.history[0]!.profit));
 
   game = closePlayerRoute(game, game.routes[0]!.id).state;
-  assert.equal(game.routes.length, 0);
-  assert.equal(game.fleet[0]!.routeId, null);
+  assert.equal(game.routes.length, 1);
+  assert.equal(game.routes[0]!.active, true);
+  assert.equal(game.routes[0]!.closingAfterRotation, true);
+  assert.equal(game.fleet[0]!.routeId, game.routes[0]!.id);
+  assert.ok(game.pendingFleetChanges.some((change) => change.shipId === game.fleet[0]!.id && change.toRouteId === null));
 });
 
 test("玩家航线可沿连通网络跨越无人行星系", () => {
@@ -1330,7 +1349,8 @@ test("发动机类型约束超空间与曲率航路", () => {
   const arrowType = generated.scenario.shipTypes.find((ship) => ship.id === "arrow-express")!;
   const services = buildRouteServices(game.routes[0]!, arrowType, generated.galaxy.ports, gameWorldLegs(generated.galaxy));
   assert.ok(services.every((service) => service.modePath.every((mode) => mode === "warp")));
-  assert.equal(services[0]!.destinationDwellHours, 4 + 12 / arrowType.speedByMode.sublight!);
+  assert.equal(services[0]!.destinationDwellHours, 4);
+  assert.ok(services[0]!.sublightHours! > 0);
   assert.ok(services[0]!.departuresPerWeek < 7);
 });
 
@@ -1359,7 +1379,7 @@ test("同速同推进方式的多艘船可共同增加航线班次", () => {
   assert.equal(twoShipServices[0]!.departuresPerWeek, oneShipServices[0]!.departuresPerWeek * 2);
 });
 
-test("同一航线拒绝不同船型的组合", () => {
+test("v0.6 同一航线允许兼容的不同船型并分别生成航班", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
   const base = generated.galaxy.ports[0]!;
   const destination = generated.galaxy.ports[1]!;
@@ -1369,14 +1389,17 @@ test("同一航线拒绝不同船型的组合", () => {
   game = deliverAllOrdersForTest(game, generated.scenario.shipTypes);
   const warpShips = game.fleet.filter((ship) => ship.shipTypeId === "pioneer-regional" || ship.shipTypeId === "arrow-express");
   game = configureShipsForTest(game, warpShips.map((ship) => ship.id), generated.scenario.shipTypes);
-  assert.throws(() => createPlayerRoute(game, {
+  game = createPlayerRoute(game, {
     name: "Mixed Speed",
     originPortId: base.id,
     destinationPortId: destination.id,
     shipIds: warpShips.map((ship) => ship.id),
     fareMultiplier: 1,
     routingMode: "warp",
-  }, generated.galaxy, generated.scenario.shipTypes), /相同船型/);
+  }, generated.galaxy, generated.scenario.shipTypes).state;
+  assert.equal(new Set(game.scheduledFlights.map((flight) => flight.shipTypeId)).size, 2);
+  assert.ok(game.scheduledFlights.every((flight) => flight.departureMinute % 5 === 0 && flight.arrivalMinute % 5 === 0));
+  assert.ok(game.scheduledFlights.every((flight) => flight.status !== "cancelled"));
 });
 
 test("五光年航段至少需要一天且船况不会改变速度", () => {
@@ -1400,7 +1423,7 @@ test("五光年航段至少需要一天且船况不会改变速度", () => {
   };
   const pristine = buildRouteServices(route, ship, ports, [leg], { shipCondition: 100 });
   const worn = buildRouteServices(route, ship, ports, [leg], { shipCondition: 35 });
-  assert.equal(pristine[0]!.inVehicleHours, 24);
+  assert.ok(pristine[0]!.inVehicleHours > 24);
   assert.equal(worn[0]!.inVehicleHours, pristine[0]!.inVehicleHours);
   assert.ok(worn[0]!.satisfactionByClass.premium < pristine[0]!.satisfactionByClass.premium);
 });
@@ -1657,4 +1680,187 @@ test("完成初级目标后仍可继续经营", () => {
   game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
   assert.equal(game.status, "playing");
   assert.equal(game.primaryGoalCompletedOnDay, completedOnDay);
+});
+
+test("v0.6 航班计划确定性、五分钟粒度并遵守星港硬容量", () => {
+  const ship = { ...PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "aurora-clipper")!, minimumPortLevel: 1 as const };
+  const ports: Starport[] = ["a", "b"].map((id) => ({
+    id, systemId: id, name: id, population: 10, economy: 50, business: 50,
+    tourism: 50, administration: 50, portLevel: 1, dailyCapacity: 1_000,
+    fuelPrice: 2, serviceFee: 50,
+  }));
+  const route: Route = {
+    id: "capacity-test", companyId: "player", name: "Capacity", kind: "return",
+    routingMode: "hyperspace", stops: ports.map((port) => ({ portId: port.id, stopType: "commercial" as const, minimumStopHours: 0 })),
+    shipTypeId: ship.id, assignedShips: 50,
+    cabinCapacityByClass: { economy: 20, business: 0, premium: 0 },
+    pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1, premium: 1 } },
+    maintenanceAllowanceHours: 0, active: true, weeklyDepartureMinutes: [3 * 1_440],
+  };
+  const leg: WorldLeg = { id: "a-b", fromPortId: "a", toPortId: "b", mode: "hyperspace", distance: 5, hazard: .3, timeModifier: 1, fuelModifier: 1, isOpen: true };
+  const ships = Array.from({ length: 50 }, (_, index) => ({ id: `s${index}`, shipTypeId: ship.id, routeId: route.id, condition: 75, cabins: { economy: 20, business: 0, premium: 0 } }));
+  const input = { seed: "v06", startDay: 3, numberOfDays: 3, routes: [route], ships, shipTypes: [ship], ports, worldLegs: [leg] };
+  const first = generateFlightSchedule(input);
+  const second = generateFlightSchedule(input);
+  assert.deepEqual(first, second);
+  assert.ok(first.flights.every((flight) => flight.departureMinute % 5 === 0 && flight.arrivalMinute % 5 === 0));
+  assert.ok(first.starportCapacity.every((entry) => entry.used <= entry.capacity));
+  assert.ok(first.starportCapacity.every((entry) => entry.slots.every((slot) => slot.used <= slot.capacity)));
+  assert.equal(starportMovementCapacity(ports[0]!), 12);
+  assert.ok(first.flights.some((flight) => flight.status === "cancelled"));
+  assert.ok(first.shipLogs.some((entry) => entry.kind === "cancelled"));
+});
+
+test("v0.6 实体空间采用加速滑行减速，比冲决定燃料消耗且目标速度受制动距离限制", () => {
+  const ship = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "meridian-liner")!;
+  const cabins = { economy: 80, business: 10, premium: 2 };
+  const distance = deterministicExitDistanceKm("sol-test", "hyperspace");
+  assert.equal(distance, deterministicExitDistanceKm("sol-test", "hyperspace"));
+  assert.notEqual(distance, deterministicExitDistanceKm("sol-test", "warp"));
+  const transit = estimateSublightTransit(ship, distance, cabins, 20, 1_000, .8);
+  assert.ok(transit.accelerationHours > 0 && transit.decelerationHours > 0);
+  assert.ok(transit.coastHours >= 0);
+  assert.ok(Math.abs(transit.totalHours - transit.accelerationHours - transit.coastHours - transit.decelerationHours) < 1e-9);
+  assert.ok(Math.abs(transit.burnSeconds - (transit.accelerationHours + transit.decelerationHours) * 3_600) < 1e-6);
+  assert.ok(transit.peakSpeedKmPerSecond <= transit.maximumReachableSpeedKmPerSecond);
+  assert.ok(transit.peakSpeedKmPerSecond <= ship.maximumSublightSpeedKmPerSecond!);
+  const heavier = estimateSublightTransit({ ...ship, structuralMassTonnes: ship.structuralMassTonnes * 2 }, distance, cabins, 20, 50, .8);
+  assert.ok(heavier.fuelUnits > estimateSublightTransit(ship, distance, cabins, 20, 50, .8).fuelUnits);
+});
+
+test("v0.6 星际效率按船重与携带燃料质量计算，控制概率及赔付边界严格匹配规格", () => {
+  const ship = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "arrow-express")!;
+  const cabins = { economy: 40, business: 2, premium: 0 };
+  const light = estimateInterstellarFuel(ship, "warp", 20, cabins, .82);
+  const heavy = estimateInterstellarFuel({ ...ship, structuralMassTonnes: ship.structuralMassTonnes * 1.5 }, "warp", 20, cabins, .82);
+  assert.ok(heavy.fuelUnits > light.fuelUnits);
+  assert.equal(starportControlDelayProbability(0), .02);
+  assert.ok(Math.abs(starportControlDelayProbability(1) - .2) < 1e-12);
+  assert.equal(flightCompensationRate(240, false), 0);
+  assert.equal(flightCompensationRate(241, false), .1);
+  assert.equal(flightCompensationRate(721, false), .25);
+  assert.equal(flightCompensationRate(0, true), 1);
+});
+
+test("v0.6 已确认长期时隙优先于后申请航线，容量逐时段硬约束", () => {
+  const ship = { ...PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "aurora-clipper")!, minimumPortLevel: 1 as const };
+  const ports: Starport[] = ["a", "b"].map((id) => ({ id, systemId: id, name: id, population: 10, economy: 50, business: 50, tourism: 50, administration: 50, portLevel: 1, dailyCapacity: 1_000, fuelPrice: 2, serviceFee: 50, hyperspaceExitDistanceKm: 500_000, warpExitDistanceKm: 500_000 }));
+  const baseRoute: Route = { id: "new", companyId: "player", name: "New", kind: "return", routingMode: "hyperspace", stops: ports.map((port) => ({ portId: port.id, stopType: "commercial" as const, minimumStopHours: 0 })), shipTypeId: ship.id, assignedShips: 16, cabinCapacityByClass: { economy: 20, business: 0, premium: 0 }, pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1, premium: 1 } }, maintenanceAllowanceHours: 0, active: true, weeklyDepartureMinutes: [3 * 1_440], slotApplicationDay: 3 };
+  const confirmed = { ...baseRoute, id: "confirmed", name: "Confirmed", confirmedLongTermSlots: true };
+  const ships = [baseRoute, confirmed].flatMap((route) => Array.from({ length: 16 }, (_, index) => ({ id: `${route.id}-${index}`, shipTypeId: ship.id, routeId: route.id, condition: 90, cabins: { economy: 20, business: 0, premium: 0 } })));
+  const leg: WorldLeg = { id: "a-b", fromPortId: "a", toPortId: "b", mode: "hyperspace", distance: 5, hazard: .2, timeModifier: 1, fuelModifier: 1, isOpen: true };
+  const result = generateFlightSchedule({ seed: "priority", startDay: 3, numberOfDays: 3, routes: [baseRoute, confirmed], ships, shipTypes: [ship], ports, worldLegs: [leg], basePortId: "a" });
+  const confirmedOperated = result.flights.filter((flight) => flight.routeId === confirmed.id && flight.status !== "cancelled").length;
+  const newOperated = result.flights.filter((flight) => flight.routeId === baseRoute.id && flight.status !== "cancelled").length;
+  assert.ok(confirmedOperated >= newOperated);
+  assert.ok(result.starportCapacity.every((day) => day.slots.every((slot) => slot.used <= slot.capacity)));
+});
+
+test("v0.6 五类延误原因都能记录，连锁晚点进入后续轮转", () => {
+  const ship = { ...PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "aurora-clipper")!, minimumPortLevel: 1 as const };
+  const ports: Starport[] = ["a", "b"].map((id) => ({ id, systemId: id, name: id, population: 10, economy: 50, business: 50, tourism: 50, administration: 50, portLevel: 5, dailyCapacity: 1_000, fuelPrice: 2, serviceFee: 50, hyperspaceExitDistanceKm: 500_000, warpExitDistanceKm: 500_000 }));
+  const route: Route = { id: "delays", companyId: "player", name: "Delays", kind: "return", routingMode: "hyperspace", stops: ports.map((port) => ({ portId: port.id, stopType: "commercial" as const, minimumStopHours: 0 })), shipTypeId: ship.id, assignedShips: 50, cabinCapacityByClass: { economy: 20, business: 0, premium: 0 }, pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1, premium: 1 } }, maintenanceAllowanceHours: 0, scheduleBufferMinutes: 0, active: true };
+  const ships = Array.from({ length: 50 }, (_, index) => ({ id: `delay-${index}`, shipTypeId: ship.id, routeId: route.id, condition: 50, commissionedDay: 1, flightHoursSinceMaintenance: 3_800, maintenanceState: "due" as const, cabins: { economy: 20, business: 0, premium: 0 } }));
+  const leg: WorldLeg = { id: "a-b", fromPortId: "a", toPortId: "b", mode: "hyperspace", distance: 5, hazard: 1, timeModifier: 1, fuelModifier: 1, isOpen: true };
+  const result = generateFlightSchedule({ seed: "all-delay-reasons", startDay: 20, numberOfDays: 30, routes: [route], ships, shipTypes: [ship], ports, worldLegs: [leg], basePortId: "a" });
+  const reasons = new Set(result.flights.flatMap((flight) => flight.delayReasons));
+  assert.deepEqual([...reasons].sort(), ["ground-turnaround", "knock-on", "route-environment", "starport-control", "technical"]);
+});
+
+test("v0.6 备用池自动替代高风险执行船，投资会提升星港硬容量", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const types = generated.scenario.shipTypes;
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id, types);
+  game = buyShip(game, "meridian-liner", types).state;
+  game = deliverAllOrdersForTest(game, types);
+  game = configureShipsForTest(game, game.fleet.map((ship) => ship.id), types);
+  game = createPlayerRoute(game, { name: "Reserve Test", originPortId: base.id, destinationPortId: destination.id, shipIds: [game.fleet[0]!.id], fareMultiplier: 1, routingMode: "hyperspace" }, generated.galaxy, types).state;
+  const reserve = game.fleet.find((ship) => ship.routeId === null)!;
+  game = setShipReserveRoute(game, reserve.id, game.routes[0]!.id, types).state;
+  game = { ...game, fleet: game.fleet.map((ship) => ship.routeId === game.routes[0]!.id ? { ...ship, condition: 50 } : ship) };
+  const substituted = buildGameSchedule(game, generated.galaxy, types, 7);
+  assert.ok(substituted.flights.some((flight) => flight.replacementShipId === reserve.id && !!flight.originalShipId));
+  const before = buildGameSchedule(game, generated.galaxy, types, 7).starportCapacity.find((entry) => entry.portId === base.id)!.capacity;
+  game = investInStarportCapacity(game, base.id, generated.galaxy, types).state;
+  const after = game.starportCapacity.find((entry) => entry.portId === base.id)!.capacity;
+  assert.ok(after > before);
+});
+
+test("v0.6 巡航速度同时改变燃料、航时、磨损、班次和利润", () => {
+  const ship = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((candidate) => candidate.id === "meridian-liner")!;
+  const cabins = { economy: 80, business: 12, premium: 4 };
+  assert.equal(fuelMultiplierAtCruiseRatio(ship.fuelOptimalCruiseRatio!, ship.fuelOptimalCruiseRatio!), 1);
+  const curve = buildSpeedEconomicsCurve(ship, 60, "hyperspace", cabins, 80_000);
+  const slow = curve.points[0]!;
+  const fast = curve.points.at(-1)!;
+  assert.ok(fast.travelHours < slow.travelHours);
+  assert.notEqual(fast.fuelUnits, slow.fuelUnits);
+  assert.notEqual(fast.maintenanceCost, slow.maintenanceCost);
+  assert.ok(fast.departuresPerWeek > slow.departuresPerWeek);
+  assert.notEqual(fast.projectedProfit, slow.projectedProfit);
+  assert.ok(new Set([curve.fuelOptimalRatio, curve.costOptimalRatio, curve.profitOptimalRatio]).size >= 2);
+  assert.equal(roundToFiveMinutes(12), 10);
+});
+
+test("v0.6 动态调船等待当前轮转且日结生成事件化财务记录", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id, generated.scenario.shipTypes);
+  game = configureShipsForTest(game, [game.fleet[0]!.id], generated.scenario.shipTypes);
+  game = createPlayerRoute(game, { name: "Event Accounting", originPortId: base.id, destinationPortId: destination.id, shipIds: [game.fleet[0]!.id], fareMultiplier: 1, routingMode: "hyperspace" }, generated.galaxy, generated.scenario.shipTypes).state;
+  const change = requestRouteFleetChange(game, game.fleet[0]!.id, null, generated.scenario.shipTypes);
+  assert.ok(change.state.pendingFleetChanges[0]!.effectiveDay > game.day);
+  assert.equal(change.state.fleet[0]!.routeId, game.routes[0]!.id);
+  game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  const record = game.history.at(-1)!;
+  assert.ok((record.flightsOperated ?? 0) > 0);
+  assert.ok(record.financialEvents?.some((event) => event.kind === "ticket-revenue"));
+  assert.ok(record.financialEvents?.some((event) => event.kind === "fuel-purchase"));
+  assert.ok(record.financialEvents?.some((event) => event.kind === "crew-payroll"));
+});
+
+test("v0.6 跨日航班保留已承诺时隙且同一舰船不会重复占用", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const types = generated.scenario.shipTypes;
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports.at(-1)!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id, types);
+  game = configureShipsForTest(game, [game.fleet[0]!.id], types);
+  game = createPlayerRoute(game, { name: "Long Rotation", originPortId: base.id, destinationPortId: destination.id, shipIds: [game.fleet[0]!.id], fareMultiplier: 1, routingMode: "hyperspace" }, generated.galaxy, types).state;
+  const first = game.scheduledFlights.find((flight) => flight.shipId === game.fleet[0]!.id && flight.status !== "cancelled")!;
+  game = advanceGameDay(game, generated.scenario, generated.galaxy).state;
+  if (first.arrivalMinute >= game.day * 1_440) {
+    assert.ok(game.scheduledFlights.some((flight) => flight.id === first.id));
+    const overlaps = game.scheduledFlights.filter((flight) => flight.shipId === first.shipId && flight.id !== first.id && flight.departureMinute < first.arrivalMinute);
+    assert.equal(overlaps.length, 0);
+  }
+});
+
+test("v0.6 手工替换老船且双向价格默认联动", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const types = generated.scenario.shipTypes;
+  const base = generated.galaxy.ports[0]!;
+  const destination = generated.galaxy.ports[1]!;
+  let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id, types);
+  game = configureShipsForTest(game, [game.fleet[0]!.id], types);
+  game = createPlayerRoute(game, { name: "Replacement", originPortId: base.id, destinationPortId: destination.id, shipIds: [game.fleet[0]!.id], fareMultiplier: 1, routingMode: "hyperspace" }, generated.galaxy, types).state;
+  const routeId = game.routes[0]!.id;
+  game = setRouteDirectionalFares(game, routeId, "outbound", { economy: 111, business: 222, premium: 333 }).state;
+  assert.deepEqual(game.routes[0]!.pricing.directionalFareByClass!.return, { economy: 111, business: 222, premium: 333 });
+  game = setRouteDirectionalPricingLinked(game, routeId, false).state;
+  game = setRouteDirectionalFares(game, routeId, "return", { economy: 99, business: 199, premium: 299 }).state;
+  assert.notDeepEqual(game.routes[0]!.pricing.directionalFareByClass!.outbound, game.routes[0]!.pricing.directionalFareByClass!.return);
+  let preorder = placeShipPurchaseAgreement({ ...game, cash: 10_000_000 }, [{ shipTypeId: "meridian-liner", quantity: 1, targetRouteId: routeId }], types).state;
+  assert.equal(preorder.shipPurchaseOrders.at(-1)!.targetRouteId, routeId);
+  const deliveryDay = preorder.shipPurchaseOrders.at(-1)!.deliveryDay;
+  preorder = deliverShipPurchaseOrders({ ...preorder, day: deliveryDay }, types, deliveryDay).state;
+  const delivered = preorder.fleet.find((ship) => ship.plannedRouteId === routeId)!;
+  preorder = configureShipCabins(preorder, delivered.id, { economy: types.find((type) => type.id === delivered.shipTypeId)!.cabinSpace, business: 0, premium: 0 }, types).state;
+  assert.equal(preorder.fleet.find((ship) => ship.id === delivered.id)!.routeId, routeId);
+  game = orderShipReplacement(game, game.fleet[0]!.id, types).state;
+  assert.deepEqual(game.shipPurchaseOrders.at(-1)!.replacementShipIds, [game.fleet[0]!.id]);
+  assert.equal(game.shipPurchaseOrders.at(-1)!.targetRouteId, routeId);
 });

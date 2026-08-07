@@ -12,8 +12,21 @@ export const CABIN_INSTALLATION_MASS_TONNES: CabinConfiguration = {
 };
 export const PASSENGER_AND_BAGGAGE_MASS_TONNES = 0.1;
 export const EMERGENCY_FUEL_MARGIN = 0.2;
-/** 标准燃料单位折算为质量，仅用于计算携油重量对耗油的反馈。 */
+/** 标准燃料单位折算为质量，仅用于计算携带燃料质量对燃料消耗的反馈。 */
 export const FUEL_UNIT_MASS_TONNES = 0.1;
+
+function stableHash(value: string): number {
+  let result = 2166136261;
+  for (const character of value) result = Math.imul(result ^ character.charCodeAt(0), 16777619);
+  return result >>> 0;
+}
+
+export function deterministicExitDistanceKm(systemId: string, mode: "warp" | "hyperspace"): number {
+  const fraction = stableHash(`${systemId}:${mode}:exit-distance`) / 4_294_967_295;
+  const minimum = mode === "hyperspace" ? 900_000 : 450_000;
+  const span = mode === "hyperspace" ? 5_100_000 : 3_250_000;
+  return Math.round((minimum + fraction * span) / 10_000) * 10_000;
+}
 
 export interface FuelConsumptionEstimate {
   fuelUnits: number;
@@ -27,6 +40,36 @@ export interface FuelConsumptionEstimate {
   carriedFuelMassTonnes: number;
 }
 
+export interface SublightTransitEstimate {
+  distanceKm: number;
+  targetSpeedKmPerSecond: number;
+  maximumReachableSpeedKmPerSecond: number;
+  peakSpeedKmPerSecond: number;
+  thrustMN: number;
+  thrustRatio: number;
+  accelerationMetersPerSecondSquared: number;
+  accelerationHours: number;
+  coastHours: number;
+  decelerationHours: number;
+  totalHours: number;
+  burnSeconds: number;
+  fuelTonnes: number;
+  fuelUnits: number;
+  requiredFuelLoadUnits: number;
+  grossMassTonnes: number;
+  specificImpulseSeconds: number;
+}
+
+export function driveEfficiencyMultiplier(
+  ratio: number,
+  optimalRatio: number,
+  slowPenalty = 3,
+  fastPenalty = 7,
+): number {
+  return 1 + slowPenalty * Math.max(0, optimalRatio - ratio) ** 2 +
+    fastPenalty * Math.max(0, ratio - optimalRatio) ** 2;
+}
+
 export function cabinInstallationMass(cabins: CabinConfiguration): number {
   return (Object.keys(CABIN_INSTALLATION_MASS_TONNES) as PassengerClass[]).reduce(
     (sum, passengerClass) =>
@@ -35,15 +78,124 @@ export function cabinInstallationMass(cabins: CabinConfiguration): number {
   );
 }
 
-/**
- * Fuel curve:
- *
- * distance × drive coefficient × gross-mass factor × range-mismatch factor.
- * The logarithmic mismatch term makes a long-range hull inefficient on a very short leg
- * without allowing the penalty to grow without bound. Fuel is loaded automatically for the
- * predicted passenger load before departure, including a fixed 20% emergency margin. The
- * closed-form equation includes the mass of that fuel without requiring iterative simulation.
- */
+function dryOperatingMass(ship: ShipType, cabins: CabinConfiguration): number {
+  return ship.structuralMassTonnes + cabinInstallationMass(cabins);
+}
+
+export function estimateInterstellarFuel(
+  ship: ShipType,
+  mode: Exclude<TravelMode, "sublight">,
+  distanceLightYears: number,
+  cabins: CabinConfiguration,
+  cruiseRatio = 1,
+): FuelConsumptionEstimate {
+  const legacyCoefficient = ship.fuelPerDistanceByMode[mode];
+  if (legacyCoefficient === undefined) throw new Error(`Fuel data is missing for ${ship.name} in ${mode}`);
+  const optimal = ship.fuelOptimalCruiseRatio ?? 0.82;
+  const efficiencyCurve = driveEfficiencyMultiplier(
+    cruiseRatio,
+    optimal,
+    ship.slowFuelPenaltyCoefficient ?? 3,
+    ship.fastFuelPenaltyCoefficient ?? 7,
+  );
+  // Compatibility-derived default preserves the former scale: efficiency is
+  // light-years × carried tonnes per tonne of fuel.
+  const baseEfficiency = ship.interstellarEfficiencyLyPerFuelTonneMass ?? 1_000 / legacyCoefficient;
+  const effectiveEfficiency = baseEfficiency / efficiencyCurve;
+  const dryMassTonnes = dryOperatingMass(ship, cabins);
+  const distance = Math.max(0, distanceLightYears);
+  const massDistanceRatio = distance / Math.max(1, effectiveEfficiency);
+  if (massDistanceRatio * (1 + EMERGENCY_FUEL_MARGIN) >= 0.98) {
+    throw new Error(`${ship.name} cannot carry enough ${mode} fuel for ${distance.toFixed(1)} ly`);
+  }
+  // F = distance × (dry mass + 120% × F) / efficiency.
+  const fuelTonnes = massDistanceRatio * dryMassTonnes /
+    Math.max(0.02, 1 - massDistanceRatio * (1 + EMERGENCY_FUEL_MARGIN));
+  const fuelUnits = fuelTonnes / FUEL_UNIT_MASS_TONNES;
+  const roundedFuelUnits = Number(fuelUnits.toFixed(4));
+  const emergencyReserveUnits = Number((roundedFuelUnits * EMERGENCY_FUEL_MARGIN).toFixed(4));
+  const requiredFuelLoadUnits = Number((roundedFuelUnits + emergencyReserveUnits).toFixed(4));
+  const carriedFuelMassTonnes = requiredFuelLoadUnits * FUEL_UNIT_MASS_TONNES;
+  return {
+    fuelUnits: roundedFuelUnits,
+    requiredFuelLoadUnits,
+    emergencyReserveUnits,
+    fuelCapacityUtilization: Number((carriedFuelMassTonnes / ship.fuelCapacityTonnes).toFixed(4)),
+    grossMassTonnes: Number((dryMassTonnes + carriedFuelMassTonnes).toFixed(3)),
+    rangeMismatchMultiplier: Number(efficiencyCurve.toFixed(4)),
+    installedCabinMassTonnes: Number(cabinInstallationMass(cabins).toFixed(3)),
+    passengerMassTonnes: 0,
+    carriedFuelMassTonnes: Number(carriedFuelMassTonnes.toFixed(3)),
+  };
+}
+
+export function estimateSublightTransit(
+  ship: ShipType,
+  distanceKm: number,
+  cabins: CabinConfiguration,
+  interstellarFuelLoadTonnes = 0,
+  targetSpeedKmPerSecond = ship.maximumSublightSpeedKmPerSecond ?? 120,
+  thrustRatio = 1,
+): SublightTransitEstimate {
+  const ratedThrustMN = ship.sublightThrustMN ?? Math.max(4, (ship.speedByMode.sublight ?? 1) * ship.structuralMassTonnes * 0.012);
+  const normalizedThrustRatio = Math.max(0.25, Math.min(1, thrustRatio));
+  const thrustMN = ratedThrustMN * normalizedThrustRatio;
+  const baseSpecificImpulse = ship.sublightSpecificImpulseSeconds ?? 4_000_000;
+  const impulsePenalty = driveEfficiencyMultiplier(
+    normalizedThrustRatio,
+    ship.fuelOptimalThrustRatio ?? 0.72,
+    ship.slowFuelPenaltyCoefficient ?? 3,
+    ship.fastFuelPenaltyCoefficient ?? 7,
+  );
+  const specificImpulseSeconds = baseSpecificImpulse / impulsePenalty;
+  const dryMassTonnes = dryOperatingMass(ship, cabins);
+  const distanceMeters = Math.max(1, distanceKm) * 1_000;
+  let fuelTonnes = 0;
+  let acceleration = 0;
+  let peakSpeedMps = 0;
+  let burnSeconds = 0;
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    const grossMassTonnes = dryMassTonnes + Math.max(0, interstellarFuelLoadTonnes) +
+      fuelTonnes * (1 + EMERGENCY_FUEL_MARGIN);
+    acceleration = thrustMN * 1_000 / Math.max(1, grossMassTonnes);
+    const maximumReachableMps = Math.sqrt(acceleration * distanceMeters);
+    const configuredMps = Math.max(1, Math.min(
+      targetSpeedKmPerSecond,
+      ship.maximumSublightSpeedKmPerSecond ?? targetSpeedKmPerSecond,
+    )) * 1_000;
+    peakSpeedMps = Math.min(configuredMps, maximumReachableMps);
+    burnSeconds = 2 * peakSpeedMps / Math.max(1e-6, acceleration);
+    fuelTonnes = thrustMN * burnSeconds / Math.max(1, specificImpulseSeconds);
+  }
+  const grossMassTonnes = dryMassTonnes + Math.max(0, interstellarFuelLoadTonnes) +
+    fuelTonnes * (1 + EMERGENCY_FUEL_MARGIN);
+  const accelerationSeconds = peakSpeedMps / Math.max(1e-6, acceleration);
+  const accelerationDistance = peakSpeedMps ** 2 / Math.max(1e-6, acceleration);
+  const coastDistance = Math.max(0, distanceMeters - accelerationDistance);
+  const coastSeconds = coastDistance / Math.max(1, peakSpeedMps);
+  const fuelUnits = fuelTonnes / FUEL_UNIT_MASS_TONNES;
+  return {
+    distanceKm: Math.round(distanceKm),
+    targetSpeedKmPerSecond,
+    maximumReachableSpeedKmPerSecond: Number((Math.sqrt(acceleration * distanceMeters) / 1_000).toFixed(3)),
+    peakSpeedKmPerSecond: Number((peakSpeedMps / 1_000).toFixed(3)),
+    thrustMN: Number(thrustMN.toFixed(3)),
+    thrustRatio: normalizedThrustRatio,
+    accelerationMetersPerSecondSquared: Number(acceleration.toFixed(6)),
+    accelerationHours: accelerationSeconds / 3_600,
+    coastHours: coastSeconds / 3_600,
+    decelerationHours: accelerationSeconds / 3_600,
+    totalHours: (burnSeconds + coastSeconds) / 3_600,
+    burnSeconds,
+    fuelTonnes: Number(fuelTonnes.toFixed(6)),
+    fuelUnits: Number(fuelUnits.toFixed(4)),
+    requiredFuelLoadUnits: Number((fuelUnits * (1 + EMERGENCY_FUEL_MARGIN)).toFixed(4)),
+    grossMassTonnes: Number(grossMassTonnes.toFixed(3)),
+    specificImpulseSeconds: Number(specificImpulseSeconds.toFixed(1)),
+  };
+}
+
+/** Unified compatibility entry point. Passenger mass is intentionally ignored in v0.6. */
 export function estimateFuelConsumption(
   ship: ShipType,
   mode: TravelMode,
@@ -51,32 +203,21 @@ export function estimateFuelConsumption(
   cabins: CabinConfiguration,
   passengerCount: number,
 ): FuelConsumptionEstimate {
-  const driveCoefficient = ship.fuelPerDistanceByMode[mode];
-  const designRange = ship.maxRangeByMode[mode];
-  if (driveCoefficient === undefined || designRange === undefined) {
-    throw new Error(`Fuel data is missing for ${ship.name} in ${mode}`);
+  if (mode !== "sublight") {
+    return estimateInterstellarFuel(ship, mode, distance, cabins, 1);
   }
+  const transit = estimateSublightTransit(ship, Math.max(1, distance) * 1_000_000, cabins);
   const installedCabinMassTonnes = cabinInstallationMass(cabins);
-  const passengerMassTonnes = Math.max(0, passengerCount) * PASSENGER_AND_BAGGAGE_MASS_TONNES;
-  const dryDepartureMassTonnes = ship.structuralMassTonnes + installedCabinMassTonnes + passengerMassTonnes;
-  const rangeRatio = Math.max(1, designRange / Math.max(1, distance));
-  const rangeMismatchMultiplier = 1 + 0.18 * Math.log2(rangeRatio);
-  const burnFactor = Math.max(0, distance) * driveCoefficient * rangeMismatchMultiplier / 100;
-  const fuelMassFeedback = burnFactor * (1 + EMERGENCY_FUEL_MARGIN) * FUEL_UNIT_MASS_TONNES;
-  const fuelUnits = burnFactor * dryDepartureMassTonnes / Math.max(0.25, 1 - fuelMassFeedback);
-  const emergencyReserveUnits = fuelUnits * EMERGENCY_FUEL_MARGIN;
-  const requiredFuelLoadUnits = fuelUnits + emergencyReserveUnits;
-  const carriedFuelMassTonnes = requiredFuelLoadUnits * FUEL_UNIT_MASS_TONNES;
-  const grossMassTonnes = dryDepartureMassTonnes + carriedFuelMassTonnes;
+  const carriedFuelMassTonnes = transit.requiredFuelLoadUnits * FUEL_UNIT_MASS_TONNES;
   return {
-    fuelUnits: Number(fuelUnits.toFixed(4)),
-    requiredFuelLoadUnits: Number(requiredFuelLoadUnits.toFixed(4)),
-    emergencyReserveUnits: Number(emergencyReserveUnits.toFixed(4)),
+    fuelUnits: transit.fuelUnits,
+    requiredFuelLoadUnits: transit.requiredFuelLoadUnits,
+    emergencyReserveUnits: transit.requiredFuelLoadUnits - transit.fuelUnits,
     fuelCapacityUtilization: Number((carriedFuelMassTonnes / ship.fuelCapacityTonnes).toFixed(4)),
-    grossMassTonnes: Number(grossMassTonnes.toFixed(3)),
-    rangeMismatchMultiplier: Number(rangeMismatchMultiplier.toFixed(4)),
-    installedCabinMassTonnes: Number(installedCabinMassTonnes.toFixed(3)),
-    passengerMassTonnes: Number(passengerMassTonnes.toFixed(3)),
-    carriedFuelMassTonnes: Number(carriedFuelMassTonnes.toFixed(3)),
+    grossMassTonnes: transit.grossMassTonnes,
+    rangeMismatchMultiplier: 1,
+    installedCabinMassTonnes,
+    passengerMassTonnes: 0,
+    carriedFuelMassTonnes,
   };
 }

@@ -39,6 +39,7 @@ interface FleetPanelProps {
   ) => void;
   onAssignShips: (configurationId: string, shipIds: readonly string[]) => void;
   onMaintainShip: (shipId: string) => void;
+  onReplaceShip: (shipId: string) => void;
   onAutoMaintenanceThresholdChange: (threshold: number) => void;
   onAutoReplacementAgeChange: (ageYears: number | null) => void;
 }
@@ -60,7 +61,7 @@ function formatModeValue(type: ShipType, mode: TravelMode): string {
   const range = type.maxRangeByMode[mode];
   if (speed === undefined || range === undefined) return "—";
   return mode === "sublight"
-    ? `指数 ${speed.toFixed(2)} · 航程 ${range}`
+    ? `推力 ${(type.sublightThrustMN ?? 0).toFixed(1)} MN · 比冲 ${(type.sublightSpecificImpulseSeconds ?? 0).toLocaleString()} s`
     : `${speed.toFixed(1)} 光年/日 · ${range} 光年`;
 }
 
@@ -173,7 +174,7 @@ function NewConfigurationCard({
       <input value={name} placeholder="例如：短程全经济 / 商务快线" onChange={(event) => setName(event.target.value)} aria-label="新配置方案名称" />
       <div className="cabin-editor-heading"><strong>统一客舱方案</strong><span className={invalid ? "over-capacity" : ""}>{usedSpace} / {type.cabinSpace} 空间</span></div>
       <CabinInputs cabins={cabins} onChange={setCabins} />
-      <p className="automatic-fuel-note">系统会按每次任务自动装载所需燃料，并固定加入 20% 应急裕度。</p>
+      <p className="automatic-fuel-note">系统按船体、客舱安装质量、航段和速度自动装载燃料；旅客质量忽略，并加入 20% 应急裕度。</p>
       <button className="save-configuration" disabled={invalid} onClick={() => {
         onCreate(type.id, name, cabins);
         setName("");
@@ -183,11 +184,12 @@ function NewConfigurationCard({
   );
 }
 
-function OwnedShipCard({ ship, type, game, onMaintainShip }: {
+function OwnedShipCard({ ship, type, game, onMaintainShip, onReplaceShip }: {
   ship: OwnedShip;
   type: ShipType;
   game: GameState;
   onMaintainShip: (shipId: string) => void;
+  onReplaceShip: (shipId: string) => void;
 }) {
   const maintenance = shipMaintenanceState(ship, game.day);
   const configuration = fleetConfigurationForShip(game, ship);
@@ -201,7 +203,7 @@ function OwnedShipCard({ ship, type, game, onMaintainShip }: {
       </div>
       <div className="ship-configuration-summary">
         <span>配置方案</span><strong>{configuration?.name ?? "未分配"}</strong>
-        {configuration && <small>头等 {configuration.cabins.premium} · 商务 {configuration.cabins.business} · 经济 {configuration.cabins.economy} · 自动配油 + 20% 应急裕度</small>}
+        {configuration && <small>头等 {configuration.cabins.premium} · 商务 {configuration.cabins.business} · 经济 {configuration.cabins.economy} · 自动装载燃料 + 20% 应急裕度</small>}
       </div>
       <div className="fleet-condition-row"><span>维护值 {ship.condition.toFixed(0)}%</span><span>本周期 {ship.flightHoursSinceMaintenance.toFixed(0)} 小时</span></div>
       <div className="ship-age-summary"><span>船龄 {ageYears.toFixed(1)} 年</span><span>舒适度 {effectiveComfort.toFixed(1)} / {type.comfort}</span><span>估值 {formatCredits(shipResaleValue(ship, type, game.day))}</span></div>
@@ -210,6 +212,7 @@ function OwnedShipCard({ ship, type, game, onMaintainShip }: {
         <button disabled={maintenance === "maintenance" || game.cash < shipMaintenanceCost(type)} onClick={() => onMaintainShip(ship.id)}>
           {maintenance === "maintenance" ? `维护至第 ${ship.maintenanceUntilDay} 日` : `大修 ${formatCredits(shipMaintenanceCost(type))}`}
         </button>
+        <button disabled={game.shipPurchaseOrders.some((order) => order.replacementShipIds?.includes(ship.id))} onClick={() => onReplaceShip(ship.id)}>订购同型替代</button>
       </div>
     </article>
   );
@@ -235,11 +238,13 @@ export function FleetPanel({
   onUpdateConfiguration,
   onAssignShips,
   onMaintainShip,
+  onReplaceShip,
   onAutoMaintenanceThresholdChange,
   onAutoReplacementAgeChange,
 }: FleetPanelProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [purchaseCart, setPurchaseCart] = useState<Record<string, number>>({});
+  const [purchaseTargetRouteId, setPurchaseTargetRouteId] = useState("standby");
   const familyGroups = useMemo(() => {
     const groups = new Map<string, { id: string; name: string; manufacturer: string; types: ShipType[] }>();
     for (const type of shipTypes) {
@@ -261,7 +266,7 @@ export function FleetPanel({
   const ownedTypeIds = [...new Set(game.fleet.map((ship) => ship.shipTypeId))];
   const purchaseLines = Object.entries(purchaseCart)
     .filter(([, quantity]) => quantity > 0)
-    .map(([shipTypeId, quantity]) => ({ shipTypeId, quantity }));
+    .map(([shipTypeId, quantity]) => ({ shipTypeId, quantity, targetRouteId: purchaseTargetRouteId === "standby" ? null : purchaseTargetRouteId }));
   const purchaseQuote = purchaseLines.length > 0
     ? quoteShipPurchaseAgreement(game, purchaseLines, shipTypes)
     : null;
@@ -276,7 +281,7 @@ export function FleetPanel({
           <div><span>未配置</span><strong>{game.fleet.filter((ship) => !ship.configurationId).length}</strong></div>
         </div>
         <div className="maintenance-cost-summary">
-          <span>每日固定维护</span><strong>{formatCredits(maintenance.total)}</strong>
+          <span>每日维护准备金（非现金）</span><strong>{formatCredits(maintenance.total)}</strong>
           <small>船龄加价 {formatCredits(maintenance.ageSurcharge)} · 供应商节省 {formatCredits(maintenance.supplierDiscount)} · 系列节省 {formatCredits(maintenance.familyDiscount)}</small>
         </div>
         <div className="fleet-policy-stack top-policy">
@@ -302,12 +307,12 @@ export function FleetPanel({
           ? <div className="fleet-empty-callout"><p>当前没有待交付采购订单。</p></div>
           : <div className="purchase-order-grid">{game.shipPurchaseOrders.map((order) => {
             const type = shipTypes.find((candidate) => candidate.id === order.shipTypeId);
-            return <article key={order.id}><div><strong>{type?.name ?? order.shipTypeId} × {order.quantity}</strong><span>{order.replacementShipIds?.length ? `自动更新 · 接替 ${order.replacementShipIds.length} 艘旧船` : order.agreementId}</span></div><em>第 {order.deliveryDay} 日交付 · 还需 {Math.max(0, order.deliveryDay - game.day)} 日</em><small>成交单价 {formatCredits(order.unitPrice)} · 行情优惠 {(order.marketDiscountRate * 100).toFixed(0)}% · 协议优惠 {(order.agreementDiscountRate * 100).toFixed(0)}%</small></article>;
+            return <article key={order.id}><div><strong>{type?.name ?? order.shipTypeId} × {order.quantity}</strong><span>{order.replacementShipIds?.length ? `自动更新 · 接替 ${order.replacementShipIds.length} 艘旧船` : order.targetRouteId ? `预定：${game.routes.find((route) => route.id === order.targetRouteId)?.name ?? order.targetRouteId}` : order.agreementId}</span></div><em>第 {order.deliveryDay} 日交付 · 还需 {Math.max(0, order.deliveryDay - game.day)} 日</em><small>成交单价 {formatCredits(order.unitPrice)} · 行情优惠 {(order.marketDiscountRate * 100).toFixed(0)}% · 协议优惠 {(order.agreementDiscountRate * 100).toFixed(0)}%</small></article>;
           })}</div>}
       </section>
 
       <section className="fleet-section glass-panel">
-        <div className="fleet-section-heading"><div><span className="eyebrow">CONFIGURATION LIBRARY</span><h2>船型统一配置方案</h2></div><p>配置方案只负责统一客舱；每次出发前会依据航段和预约载客量自动配油，并固定加入 20% 应急裕度。</p></div>
+        <div className="fleet-section-heading"><div><span className="eyebrow">CONFIGURATION LIBRARY</span><h2>船型统一配置方案</h2></div><p>配置方案属于舰船；每次出发前按船体、客舱安装质量、携带燃料质量、航段和速度自动装载燃料，暂不计旅客质量。</p></div>
         {ownedTypeIds.map((shipTypeId) => {
           const type = shipTypes.find((candidate) => candidate.id === shipTypeId)!;
           const ships = game.fleet.filter((ship) => ship.shipTypeId === shipTypeId);
@@ -328,7 +333,7 @@ export function FleetPanel({
         <div className="fleet-section-heading"><div><span className="eyebrow">OWNED SHIPS</span><h2>当前舰船与维护</h2></div></div>
         <div className="owned-fleet-grid">{game.fleet.map((ship) => {
           const type = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
-          return type ? <OwnedShipCard key={ship.id} ship={ship} type={type} game={game} onMaintainShip={onMaintainShip} /> : null;
+          return type ? <OwnedShipCard key={ship.id} ship={ship} type={type} game={game} onMaintainShip={onMaintainShip} onReplaceShip={onReplaceShip} /> : null;
         })}</div>
       </section>
 
@@ -354,6 +359,7 @@ export function FleetPanel({
         </nav>}
         {purchaseQuote && <section className="purchase-agreement-cart">
           <div className="purchase-agreement-heading"><div><strong>采购协议草案</strong><span>{purchaseQuote.lines.length} 个型号 · {purchaseQuote.totalShips} 艘</span></div><em>批量协议优惠 {(purchaseQuote.agreementDiscountRate * 100).toFixed(0)}%</em></div>
+          <label>交付后目标航线<select value={purchaseTargetRouteId} onChange={(event) => setPurchaseTargetRouteId(event.target.value)}><option value="standby">基地待命（默认）</option>{game.routes.filter((route) => route.active).map((route) => <option key={route.id} value={route.id}>{route.name}</option>)}</select></label>
           <div className="purchase-agreement-lines">{purchaseQuote.lines.map((line) => {
             const type = shipTypes.find((candidate) => candidate.id === line.shipTypeId)!;
             return <div key={line.shipTypeId}><span><strong>{type.name} × {line.quantity}</strong><small>第 {line.deliveryDay} 日交付{line.inventoryUsed > 0 ? ` · 使用现货 ${line.inventoryUsed} 艘` : " · 排产制造"}</small></span><em>{formatCredits(line.unitPrice * line.quantity)}</em><button onClick={() => setPurchaseCart((current) => { const next = { ...current }; delete next[line.shipTypeId]; return next; })}>移除</button></div>;
@@ -379,8 +385,8 @@ export function FleetPanel({
                 <div><span>客舱空间</span><strong>{type.cabinSpace} 单位</strong></div>
                 <div><span>固定维护</span><strong>{formatCredits(type.fixedMaintenanceCostPerDay * FIXED_MAINTENANCE_COST_SCALE)} / 日</strong></div>
               </div>
-              <div className="drive-specs"><div><span>亚光速</span><strong>{formatModeValue(type, "sublight")}</strong></div>{interstellarModes.map((mode) => <div key={mode}><span>{MODE_LABELS[mode]} · 耗油系数 {type.fuelPerDistanceByMode[mode]}</span><strong>{formatModeValue(type, mode)}</strong></div>)}</div>
-              <div className="fuel-curve-table"><div className="fuel-curve-heading"><span>自动配油曲线 · 已含 20% 应急裕度</span><small>空载 / 满载任务耗油</small></div>{curve.map((point) => <div key={point.label}><span>{point.label}<small>{point.distance.toFixed(0)} 光年 · 错配 ×{point.empty.rangeMismatchMultiplier.toFixed(2)}</small></span><strong>{point.empty.fuelUnits.toFixed(1)} / {point.full.fuelUnits.toFixed(1)} 单位<small>满载起飞装油 {point.full.requiredFuelLoadUnits.toFixed(1)} · 油箱 {(point.full.fuelCapacityUtilization * 100).toFixed(0)}%</small></strong></div>)}</div>
+              <div className="drive-specs"><div><span>亚光速</span><strong>{formatModeValue(type, "sublight")}</strong></div>{interstellarModes.map((mode) => <div key={mode}><span>{MODE_LABELS[mode]} · 燃料消耗系数 {type.fuelPerDistanceByMode[mode]}</span><strong>{formatModeValue(type, mode)}</strong></div>)}</div>
+              <div className="fuel-curve-table"><div className="fuel-curve-heading"><span>质量—距离自动装载燃料 · 已含 20% 应急裕度</span><small>旅客质量暂时忽略</small></div>{curve.map((point) => <div key={point.label}><span>{point.label}<small>{point.distance.toFixed(0)} 光年 · 速度效率倍率 ×{point.empty.rangeMismatchMultiplier.toFixed(2)}</small></span><strong>消耗 {point.empty.fuelUnits.toFixed(1)} FU<small>起飞燃料 {point.empty.requiredFuelLoadUnits.toFixed(1)} · 燃料舱 {(point.empty.fuelCapacityUtilization * 100).toFixed(0)}%</small></strong></div>)}</div>
               <div className="purchase-row"><label>协议数量<input type="number" min="1" max="20" value={quantity} onChange={(event) => setQuantities((current) => ({ ...current, [type.id]: Math.max(1, Math.min(20, Math.floor(Number(event.target.value) || 1))) }))} /></label><div><span>当前行情小计</span><strong>{formatCredits(marketUnitPrice * quantity)}</strong></div><button disabled={cartTotal + quantity > 60} onClick={() => setPurchaseCart((current) => ({ ...current, [type.id]: Math.min(20, (current[type.id] ?? 0) + quantity) }))}>加入采购协议</button></div>
             </article>
           );

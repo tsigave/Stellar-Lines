@@ -158,6 +158,61 @@ button { color: inherit; }
 .top-company-state i { width: 7px; height: 7px; border-radius: 50%; }
 .top-company-state.positive { color: #7fd8c5; }
 .top-company-state.positive i { background: var(--teal); box-shadow: 0 0 7px var(--teal); }
+
+.schedule-workspace { min-height: 0; overflow: auto; padding: 14px 18px 32px; }
+.schedule-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; }
+.schedule-hero h2, .schedule-card h2 { margin: 4px 0 6px; }
+.schedule-hero p, .schedule-card p { margin: 0; color: var(--muted); }
+.schedule-kpis { display: flex; gap: 8px; }
+.schedule-kpis span { min-width: 108px; padding: 10px 12px; display: flex; flex-direction: column; color: var(--muted); border: 1px solid var(--border); background: rgba(8, 25, 33, .64); }
+.schedule-kpis strong { margin-top: 4px; color: var(--teal-soft); font-size: 22px; }
+.schedule-grid { margin-top: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.schedule-card { min-width: 0; padding: 16px; }
+.schedule-card.span-2 { grid-column: span 2; }
+.schedule-card td small { display: block; margin-top: 3px; color: var(--muted); }
+.positive-text { color: var(--teal); }
+.warning-text { color: var(--amber); }
+.negative-text { color: var(--red); }
+.capacity-day-list { margin-top: 14px; display: grid; gap: 9px; }
+.capacity-day-list > div, .capacity-day-list > button { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; gap: 9px; padding: 5px; font-size: 12px; }
+.capacity-day-list i { height: 7px; overflow: hidden; background: rgba(94, 132, 143, .18); }
+.capacity-day-list b { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--amber)); }
+.capacity-day-list strong { text-align: right; color: #bfd0d5; }
+.capacity-day-list button { width: 100%; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
+.capacity-day-list button.active { background: rgba(57,151,145,.12); }
+.capacity-day-list button small { grid-column: 1 / -1; color: #6f858c; font-size: 10px; }
+.slot-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-top: 10px; }
+.slot-grid > div { min-height: 45px; padding: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px solid rgba(111,160,170,.2); background: rgba(8,20,28,.55); }
+.slot-grid > div.full { border-color: rgba(255,124,121,.48); background: rgba(91,35,32,.32); }
+.slot-grid time { color: #80969c; font-size: 11px; }
+.slot-grid strong { color: #d4e6e5; font-size: 12px; }
+.dispatch-list, .ship-log-list { margin-top: 12px; display: grid; gap: 7px; }
+.dispatch-list > div { display: grid; grid-template-columns: 1fr minmax(120px, 1fr) auto; gap: 7px; align-items: center; }
+.dispatch-list span { display: flex; flex-direction: column; }
+.dispatch-list small { color: var(--muted); }
+.dispatch-list select, .dispatch-list button, .schedule-card > select { min-height: 34px; border: 1px solid var(--border); color: var(--text); background: #0a1721; }
+.ship-log-list > div { display: grid; grid-template-columns: 120px 120px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.ship-log-list time { color: var(--teal); }
+.ship-log-list span { color: #9fb3bb; }
+.speed-economics-row { margin-top: 12px; padding: 12px; display: grid; grid-template-columns: 180px minmax(160px, 1fr) minmax(260px, 1.4fr); gap: 10px 16px; align-items: center; border: 1px solid var(--border); background: rgba(8, 25, 33, .45); }
+.speed-economics-row > div { display: flex; flex-direction: column; }
+.speed-economics-row small, .speed-economics-row em { color: var(--muted); font-size: 12px; font-style: normal; }
+.speed-economics-row em { grid-column: 2 / -1; }
+.speed-economics-row label { display: grid; grid-template-columns: 150px minmax(160px,1fr); align-items: center; gap: 10px; color: #8ca1a6; font-size: 12px; }
+.directional-fares { display: grid; gap: 8px; margin: 12px 0; }
+.directional-fares label { display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 8px; }
+.directional-fares input { min-width: 0; padding: 7px 8px; border: 1px solid var(--border); color: var(--text); background: #09151e; }
+.manual-schedule-editor { display: flex; gap: 7px; }
+.manual-schedule-editor select, .manual-schedule-editor input, .manual-schedule-editor button { min-height: 34px; border: 1px solid var(--border); color: var(--text); background: #09151e; }
+.schedule-chip-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.schedule-chip-list button, .schedule-chip-list span { padding: 7px 9px; border: 1px solid var(--border); color: #b9d2d5; background: rgba(15, 47, 56, .5); }
+.buffer-control { display: grid; gap: 7px; margin: 12px 0; color: #8ba0a5; font-size: 12px; }
+
+@media (max-width: 1050px) {
+  .schedule-grid { grid-template-columns: 1fr; }
+  .schedule-card.span-2 { grid-column: auto; }
+  .schedule-hero { align-items: flex-start; flex-direction: column; }
+}
 .top-company-state.negative { color: #ff9c97; }
 .top-company-state.negative i { background: var(--red); box-shadow: 0 0 7px var(--red); }
 
@@ -413,6 +468,8 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .hyper-lane { stroke: #55decf; stroke-width: 1.35; stroke-opacity: 0.5; filter: drop-shadow(0 0 2px rgba(80,223,206,0.32)); }
 .warp-lane { stroke: #c279d9; stroke-width: 1; stroke-opacity: 0.46; stroke-dasharray: 5 5; }
 .player-route-line { stroke: #ffcb71; stroke-width: 4; stroke-opacity: 0.84; filter: drop-shadow(0 0 4px rgba(255, 197, 91, 0.8)); }
+.player-route-line.route-delay-alert { stroke: #f2bd69; }
+.player-route-line.route-capacity-alert { stroke: #ff7c79; stroke-dasharray: 5 4; }
 .player-hyper-route { stroke-dasharray: none; }
 .player-warp-route { stroke: #d98df0; stroke-dasharray: 4 5; filter: drop-shadow(0 0 4px rgba(217, 141, 240, 0.74)); }
 .system-star, .port-dot { cursor: pointer; transition: r 120ms, filter 180ms; }

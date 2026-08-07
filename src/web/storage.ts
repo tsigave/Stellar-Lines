@@ -28,11 +28,16 @@ export function compactGameForStorage(game: GameState, historyDays: number): Gam
     ...game,
     history: history.map((record, index) => ({
       ...record,
+      financialEvents: index === history.length - 1 ? (record.financialEvents?.slice(-200) ?? []) : [],
       routes: record.routes.map((route) =>
         compactHistoricalRoute(route, index === history.length - 1),
       ),
     })),
     fuelMarket: game.fuelMarket.slice(-360),
+    scheduledFlights: game.scheduledFlights.slice(0, 300),
+    shipLogs: game.shipLogs.slice(-200),
+    // Empty capacity rows are reproducible from the port level and current day.
+    starportCapacity: game.starportCapacity.filter((entry) => entry.used > 0),
   };
 }
 

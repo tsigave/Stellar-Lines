@@ -15,7 +15,11 @@ import {
   isGameState,
   migrateGameState,
   performShipMaintenance,
+  orderShipReplacement,
   placeShipPurchaseAgreement,
+  requestRouteFleetChange,
+  setShipReserveRoute,
+  investInStarportCapacity,
   setAutoMaintenanceThreshold,
   setAutoReplacementAge,
   sellFuelFromWarehouse,
@@ -24,6 +28,13 @@ import {
   setFuelWarehouseRental,
   signFuelContract,
   setPlayerRouteFares,
+  setRouteCruiseRatio,
+  setRouteDirectionalFares,
+  setRouteDirectionalPricingLinked,
+  setRouteScheduleBuffer,
+  setRouteSlotBid,
+  setRouteSublightProfile,
+  setRouteWeeklyDepartureMinutes,
   updateFleetConfiguration,
   simulateCampaign,
   togglePlayerRoute,
@@ -39,6 +50,7 @@ import { GalaxyMap } from "./components/GalaxyMap.js";
 import { GenerationPanel } from "./components/GenerationPanel.js";
 import { OperationsPanel } from "./components/OperationsPanel.js";
 import { RouteEconomicsPanel } from "./components/RouteEconomicsPanel.js";
+import { SchedulePanel } from "./components/SchedulePanel.js";
 import { TimeControls, type GameSpeed } from "./components/TimeControls.js";
 import { TopMetrics } from "./components/TopMetrics.js";
 import { loadStoredGame, persistGame } from "./storage.js";
@@ -61,7 +73,7 @@ function createSession(
   if (!base) throw new Error("可玩星域至少需要两个有人星球");
   return {
     generated,
-    game: createNewGame(config, generated.galaxy, base, generated.scenario.shipTypes),
+    game: createNewGame(config, generated.galaxy, base, generated.scenario.shipTypes, generated.scenario.routes.filter((route) => route.companyId !== "player")),
     restored,
   };
 }
@@ -92,7 +104,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [showNewGame, setShowNewGame] = useState(!session.restored);
-  const [activeView, setActiveView] = useState<"map" | "fleet" | "fuel" | "route">("map");
+  const [activeView, setActiveView] = useState<"map" | "fleet" | "fuel" | "schedule" | "route">("map");
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(session.game.routes[0]?.id ?? null);
   const { generated, game } = session;
 
@@ -169,7 +181,7 @@ export function App() {
       if (!newGamePreview) throw new Error("请先提供有效的银河配置");
       const next: GameSession = {
         generated: newGamePreview,
-        game: createNewGame(config, newGamePreview.galaxy, draftBasePortId, newGamePreview.scenario.shipTypes),
+        game: createNewGame(config, newGamePreview.galaxy, draftBasePortId, newGamePreview.scenario.shipTypes, newGamePreview.scenario.routes.filter((route) => route.companyId !== "player")),
         restored: true,
       };
       setSession(next);
@@ -197,7 +209,7 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.5.2</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.6</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
         <div className={saveWarning ? "header-indicator warning" : "header-indicator"}><i />{saveWarning ? "存档受限" : "自动存档"}</div>
@@ -215,6 +227,9 @@ export function App() {
         <button className={activeView === "fuel" ? "active" : ""} onClick={() => setActiveView("fuel")}>
           <span>燃料管理</span><small>市场 · 合约 · 仓库</small>
         </button>
+        <button className={activeView === "schedule" ? "active" : ""} onClick={() => setActiveView("schedule")}>
+          <span>航班调度</span><small>班表 · 轮转 · 星港</small>
+        </button>
         {selectedRouteId && <button className={activeView === "route" ? "active" : ""} onClick={() => setActiveView("route")}>
           <span>航线经营</span><small>旅客 · 价格 · 成本</small>
         </button>}
@@ -228,6 +243,13 @@ export function App() {
           routeId={selectedRouteId}
           onBack={() => setActiveView("map")}
           onConfirmFares={(routeId, fares) => commit(() => setPlayerRouteFares(game, routeId, fares))}
+          onConfirmDirectionalFares={(routeId, direction, fares) => commit(() => setRouteDirectionalFares(game, routeId, direction, fares))}
+          onDirectionalPricingLinked={(routeId, linked) => commit(() => setRouteDirectionalPricingLinked(game, routeId, linked))}
+          onCruiseRatioChange={(routeId, shipTypeId, ratio) => commit(() => setRouteCruiseRatio(game, routeId, shipTypeId, ratio, generated.scenario.shipTypes, generated.galaxy))}
+          onSublightProfileChange={(routeId, shipTypeId, speedValue, thrustRatio) => commit(() => setRouteSublightProfile(game, routeId, shipTypeId, speedValue, thrustRatio, generated.scenario.shipTypes, generated.galaxy))}
+          onScheduleBufferChange={(routeId, minutes) => commit(() => setRouteScheduleBuffer(game, routeId, minutes, generated.galaxy, generated.scenario.shipTypes))}
+          onSlotBidChange={(routeId, bid) => commit(() => setRouteSlotBid(game, routeId, bid, generated.galaxy, generated.scenario.shipTypes))}
+          onWeeklyScheduleChange={(routeId, minutes) => commit(() => setRouteWeeklyDepartureMinutes(game, routeId, minutes, generated.galaxy, generated.scenario.shipTypes))}
         />
       ) : activeView === "fleet" ? (
         <FleetPanel
@@ -238,6 +260,7 @@ export function App() {
           onUpdateConfiguration={(configurationId, name, cabins) => commit(() => updateFleetConfiguration(game, configurationId, name, cabins, generated.scenario.shipTypes))}
           onAssignShips={(configurationId, shipIds) => commit(() => assignShipsToFleetConfiguration(game, configurationId, shipIds))}
           onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
+          onReplaceShip={(shipId) => commit(() => orderShipReplacement(game, shipId, generated.scenario.shipTypes))}
           onAutoMaintenanceThresholdChange={(threshold) => commit(() => setAutoMaintenanceThreshold(game, threshold))}
           onAutoReplacementAgeChange={(ageYears) => commit(() => setAutoReplacementAge(game, ageYears))}
         />
@@ -251,6 +274,15 @@ export function App() {
           onWarehousePolicyChange={(limit, policy) => commit(() => setFuelWarehousePolicy(game, limit, policy))}
           onBuyWarehouseFuel={(units) => commit(() => buyFuelForWarehouse(game, units))}
           onSellWarehouseFuel={(units) => commit(() => sellFuelFromWarehouse(game, units))}
+        />
+      ) : activeView === "schedule" ? (
+        <SchedulePanel
+          game={game}
+          galaxy={generated.galaxy}
+          shipTypes={generated.scenario.shipTypes}
+          onFleetChange={(shipId, routeId) => commit(() => requestRouteFleetChange(game, shipId, routeId, generated.scenario.shipTypes, generated.galaxy))}
+          onReserveChange={(shipId, routeId) => commit(() => setShipReserveRoute(game, shipId, routeId, generated.scenario.shipTypes))}
+          onInvestCapacity={(portId) => commit(() => investInStarportCapacity(game, portId, generated.galaxy, generated.scenario.shipTypes))}
         />
       ) : (
         <main className="workspace">

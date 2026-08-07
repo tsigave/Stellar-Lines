@@ -13,6 +13,7 @@ export * from "./generation/system-names.js";
 export * from "./journeys.js";
 export * from "./parameters.js";
 export * from "./routes.js";
+export * from "./scheduling.js";
 export * from "./scenarios/proof-of-concept.js";
 export * from "./simulation.js";
 export * from "./types.js";
