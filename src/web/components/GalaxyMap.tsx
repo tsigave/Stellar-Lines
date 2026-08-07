@@ -7,7 +7,9 @@ import {
   type WheelEvent,
 } from "react";
 import { createRandom } from "../../generation/random.js";
-import { gameWorldLegs, shipMaintenanceState, type GameState } from "../../game.js";
+import { shipMaintenanceState } from "../../game/fleet.js";
+import type { GameState } from "../../game/model.js";
+import { gameWorldLegs } from "../../game/schedule.js";
 import { MAX_INTERSTELLAR_SPEED_LY_PER_DAY } from "../../routes.js";
 import type { GeneratedGalaxy, Route, ShipType, StarSystem, SystemLane } from "../../types.js";
 

@@ -1,3 +1,5 @@
+import { clamp } from "../../utils.js";
+
 export interface MapAnchor {
   x: number;
   y: number;
@@ -29,8 +31,8 @@ export const MAP_CONTENT_REVEAL_DELAY_MS = 180;
 
 export function clampAnchor(anchor: MapAnchor): MapAnchor {
   return {
-    x: Math.max(0.08, Math.min(0.92, anchor.x)),
-    y: Math.max(0.08, Math.min(0.92, anchor.y)),
+    x: clamp(anchor.x, 0.08, 0.92),
+    y: clamp(anchor.y, 0.08, 0.92),
   };
 }
 

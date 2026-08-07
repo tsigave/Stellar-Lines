@@ -18,7 +18,7 @@ import {
   zoomAround,
   type DetailCamera,
   type MapLayerEntry,
-} from "../mapTransitions.js";
+} from "./mapTransitions.js";
 import { PlanetBody } from "./PlanetBody.js";
 import { SpaceBackdrop } from "./SpaceBackdrop.js";
 import { PLANET_LABELS } from "./SystemMap.js";

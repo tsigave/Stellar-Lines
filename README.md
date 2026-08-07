@@ -48,10 +48,17 @@
 
 ### 本地运行
 
-需要 Node.js `^20.19.0` 或 `>=22.12.0`；推荐使用 Node.js 24。
+项目固定使用 Node.js 24。仓库提供 `.mise.toml` 和 `.nvmrc`；当前环境已安装 `mise`，首次运行请执行：
 
 ```bash
-npm install
+mise install
+mise exec -- node --version  # 应显示 v24.x
+mise exec -- npm ci
+```
+
+随后在已启用 `mise` shell 集成的终端中，可直接运行：
+
+```bash
 npm test
 npm run demo
 npm run demo:campaign

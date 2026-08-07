@@ -1,4 +1,6 @@
-﻿import { driveEfficiencyMultiplier, estimateInterstellarFuel } from "./fuel.js";
+import { hashString } from "./utils.js";
+
+import { driveEfficiencyMultiplier, estimateInterstellarFuel } from "./fuel.js";
 import { buildRouteServices } from "./routes.js";
 import type {
   CabinConfiguration,
@@ -130,14 +132,8 @@ export interface SpeedEconomicsCurve {
   profitOptimalRatio: number;
 }
 
-function hash(value: string): number {
-  let result = 2166136261;
-  for (const character of value) result = Math.imul(result ^ character.charCodeAt(0), 16777619);
-  return result >>> 0;
-}
-
 function random01(key: string): number {
-  let state = hash(key) || 1;
+  let state = hashString(key) || 1;
   state ^= state << 13;
   state ^= state >>> 17;
   state ^= state << 5;

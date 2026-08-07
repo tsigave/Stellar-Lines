@@ -1,3 +1,5 @@
+import { hashString } from "../utils.js";
+
 export interface RandomSource {
   next(): number;
   integer(minimum: number, maximum: number): number;
@@ -5,17 +7,8 @@ export interface RandomSource {
   shuffle<T>(values: readonly T[]): T[];
 }
 
-function hashSeed(seed: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash ^= seed.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
 export function createRandom(seed: string): RandomSource {
-  let state = hashSeed(seed) || 0x9e3779b9;
+  let state = hashString(seed) || 0x9e3779b9;
   const next = (): number => {
     state += 0x6d2b79f5;
     let value = state;

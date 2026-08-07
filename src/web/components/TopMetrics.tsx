@@ -1,4 +1,5 @@
-import { currentFuelPrice, type GameState } from "../../game.js";
+import { currentFuelPrice } from "../../game/fuel.js";
+import type { GameState } from "../../game/model.js";
 import { formatCredits, formatGameDate, formatNumber } from "../format.js";
 
 interface TopMetricsProps {

@@ -20,11 +20,11 @@
 
 ## 保留代码
 
-- `src/web/components/ContinuousGalaxyMap.tsx`：三级连续视窗原型
-- `src/web/components/SystemMap.tsx`：独立恒星系层原型
-- `src/web/components/PlanetMap.tsx`：独立行星与卫星层原型
-- `src/web/components/CelestialWebGpuLayer.tsx`：WebGPU / WebGL 天体渲染层
-- `src/web/components/PlanetBody.tsx`、`StarBody.tsx`：SVG 天体降级实现
-- `src/web/mapTransitions.ts`：独立分层地图的相机与过渡工具
+- `src/web/technical-reserve/ContinuousGalaxyMap.tsx`：三级连续视窗原型
+- `src/web/technical-reserve/SystemMap.tsx`：独立恒星系层原型
+- `src/web/technical-reserve/PlanetMap.tsx`：独立行星与卫星层原型
+- `src/web/technical-reserve/CelestialWebGpuLayer.tsx`：WebGPU / WebGL 天体渲染层
+- `src/web/technical-reserve/PlanetBody.tsx`、`SpaceBackdrop.tsx`：SVG 天体降级实现
+- `src/web/technical-reserve/mapTransitions.ts`：独立分层地图的相机与过渡工具
 
 这些文件不由首版 `App` 入口引用。若未来重新启用，需要先重新确认用户价值，再补做代码拆分、LOD、设备丢失恢复、视觉回归、触控与无障碍验证。

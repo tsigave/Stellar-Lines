@@ -1,4 +1,4 @@
-import { shipMaintenanceState } from "../../game.js";
+import { shipMaintenanceState } from "../../game/fleet.js";
 import type {
   GameState,
   GeneratedGalaxy,
@@ -6,7 +6,7 @@ import type {
   Route,
   ShipType,
 } from "../../index.js";
-import { CASH_GOAL, DEADLINE_DAY, PASSENGER_GOAL } from "../../game.js";
+import { CASH_GOAL, DEADLINE_DAY, PASSENGER_GOAL } from "../../game/model.js";
 import { formatCredits, formatNumber } from "../format.js";
 
 interface CompanyPanelProps {

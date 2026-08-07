@@ -1,20 +1,13 @@
 import { useMemo } from "react";
+import { hashString } from "../../utils.js";
 
 interface SpaceBackdropProps {
   id: string;
   seed: string;
 }
 
-function hashSeed(value: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
-  }
-  return hash >>> 0;
-}
-
 function randomSequence(seed: string) {
-  let state = hashSeed(seed) || 1;
+  let state = hashString(seed) || 1;
   return () => {
     state ^= state << 13;
     state ^= state >>> 17;

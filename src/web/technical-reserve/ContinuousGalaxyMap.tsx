@@ -14,6 +14,7 @@ import type {
   SystemMoon,
   SystemPlanet,
 } from "../../types.js";
+import { clamp } from "../../utils.js";
 import { formatPopulation } from "../format.js";
 import {
   CelestialWebGpuLayer,
@@ -77,10 +78,6 @@ const ECONOMY_LABELS: Record<EconomyType, string> = {
   research: "科研",
   administrative: "行政服务",
 };
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.max(minimum, Math.min(maximum, value));
-}
 
 function smoothstep(start: number, end: number, value: number): number {
   const normalized = clamp((value - start) / (end - start), 0, 1);

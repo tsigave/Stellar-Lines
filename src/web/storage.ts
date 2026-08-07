@@ -1,4 +1,4 @@
-import type { GameRouteDaySummary, GameState } from "../game.js";
+import type { GameRouteDaySummary, GameState } from "../game/model.js";
 
 export interface StorageLike {
   getItem(key: string): string | null;
