@@ -2,4 +2,5 @@ node_modules/
 dist/
 web-dist/
 *.tsbuildinfo
+.vite-*.log
 .DS_Store

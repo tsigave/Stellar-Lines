@@ -19,6 +19,7 @@ import {
   placeShipPurchaseAgreement,
   requestRouteFleetChange,
   setShipReserveRoute,
+  sellShip,
   investInStarportCapacity,
   setAutoMaintenanceThreshold,
   setAutoReplacementAge,
@@ -275,7 +276,7 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PROPULSION ECONOMY V0.7</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PROPULSION ECONOMY V0.7.1</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
         <button className="settings-button" onClick={() => setShowSettings(true)}>界面设置</button>
@@ -344,6 +345,7 @@ export function App() {
       ) : activeView === "fleet" ? (
         <FleetPanel
           game={game}
+          galaxy={generated.galaxy}
           shipTypes={generated.scenario.shipTypes}
           onPlacePurchaseAgreement={(lines) => commit(() => placeShipPurchaseAgreement(game, lines, generated.scenario.shipTypes))}
           onCreateConfiguration={(shipTypeId, name, cabins, build) => commit(() => createFleetConfiguration(game, shipTypeId, name, cabins, generated.scenario.shipTypes, build))}
@@ -351,6 +353,7 @@ export function App() {
           onAssignShips={(configurationId, shipIds) => commit(() => assignShipsToFleetConfiguration(game, configurationId, shipIds))}
           onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
           onReplaceShip={(shipId) => commit(() => orderShipReplacement(game, shipId, generated.scenario.shipTypes))}
+          onSellShip={(shipId) => commit(() => sellShip(game, shipId, generated.scenario.shipTypes))}
           onAutoMaintenanceThresholdChange={(threshold) => commit(() => setAutoMaintenanceThreshold(game, threshold))}
           onAutoReplacementAgeChange={(ageYears) => commit(() => setAutoReplacementAge(game, ageYears))}
         />

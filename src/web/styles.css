@@ -1345,7 +1345,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .fleet-card-actions { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .fleet-card-actions button { min-height: 36px; border: 1px solid rgba(112, 163, 177, 0.22); color: #a8c2be; background: rgba(17, 37, 49, 0.7); cursor: pointer; }
 
-.shipyard-builder-grid { display: grid; grid-template-columns: minmax(250px, .78fr) minmax(320px, 1fr) minmax(360px, 1.22fr); gap: 12px; margin: 14px 0 18px; }
+.shipyard-builder-grid { display: grid; grid-template-columns: minmax(250px, .72fr) minmax(390px, 1.12fr) minmax(370px, 1.08fr); gap: 12px; margin: 14px 0 18px; }
 .shipyard-builder-column { min-width: 0; padding: 16px; border: 1px solid rgba(111, 160, 170, .24); background: rgba(5, 16, 24, .82); }
 .shipyard-builder-column h3 { margin: 4px 0 13px; color: #d1dedc; }
 .shipyard-builder-column > strong, .shipyard-builder-column > small { display: block; }
@@ -1355,7 +1355,50 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .shipyard-builder-column dt { color: #78929a; }
 .shipyard-builder-column dd { margin: 0; color: #bed0ce; text-align: right; }
 .options-column > label { display: grid; gap: 5px; margin-bottom: 11px; color: #8fa7ad; }
-.options-column select, .mission-inputs input { min-height: 34px; border: 1px solid rgba(111, 160, 170, .25); color: #bfd0ce; background: #091923; }
+.options-column select, .mission-inputs input, .mission-profile-source select { min-height: 34px; border: 1px solid rgba(111, 160, 170, .25); color: #bfd0ce; background: #091923; }
+.ship-description { color: #82979d; font-size: 12px; line-height: 1.55; }
+.ship-structure-data { margin: 12px 0 15px !important; }
+.ship-structure-data dd { font-variant-numeric: tabular-nums; }
+.ship-structure-data dd.efficiency-data { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.efficiency-data button { padding: 0; border: 0; color: var(--teal); background: transparent; font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.efficiency-data button:hover { color: #d8fff8; }
+.efficiency-data button:disabled { color: #64777d; cursor: default; text-decoration: none; }
+.efficiency-curve-panel { margin: -3px 0 15px; padding: 11px 10px 7px; border: 1px solid rgba(80, 223, 206, .22); background: rgba(4, 17, 24, .82); animation: efficiency-curve-in 180ms ease-out; }
+.efficiency-curve-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 5px; }
+.efficiency-curve-heading > div { display: flex; flex-direction: column; gap: 3px; }
+.efficiency-curve-heading strong { color: #cce5e2; font-size: 13px; }
+.efficiency-curve-heading small { color: #708b91; font-size: 11px; }
+.efficiency-curve-heading > span { color: var(--amber); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.efficiency-curve-panel svg { width: 100%; height: auto; display: block; overflow: visible; }
+.efficiency-curve-panel svg line { stroke: rgba(112, 150, 161, .15); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.efficiency-curve-panel svg polyline { fill: none; stroke: var(--teal); stroke-width: 2.2; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px rgba(80, 223, 206, .35)); }
+.efficiency-curve-panel svg text { fill: #698087; font-size: 9px; }
+.efficiency-curve-panel svg .axis-label { fill: #829ca1; font-size: 10px; }
+.efficiency-curve-panel svg .curve-point { fill: #9dc8c4; stroke: #0a1b23; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.efficiency-curve-panel svg .current-guide { stroke: rgba(242, 189, 105, .62); stroke-dasharray: 4 3; }
+.efficiency-curve-panel svg .current-point { fill: var(--amber); stroke: #fff0cd; stroke-width: 1.6; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px rgba(242, 189, 105, .58)); }
+@keyframes efficiency-curve-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+.ship-selector-column .ship-family-menu.compact { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.ship-family-branch { min-width: 0; }
+.ship-family-menu .ship-family-trigger { width: 100%; min-height: 58px; padding: 9px 11px; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+.ship-family-trigger > span { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.ship-family-trigger > span small { color: #738a92; font-size: 12px; }
+.ship-family-trigger > i { flex: 0 0 auto; color: #7c989c; font-size: 18px; font-style: normal; transform: rotate(0deg); transition: transform 220ms ease, color 220ms ease; }
+.ship-family-branch.selected > .ship-family-trigger { border-color: rgba(80, 223, 206, .34); }
+.ship-family-branch.expanded > .ship-family-trigger { border-color: rgba(242, 189, 105, .46); background: rgba(72, 50, 22, .22); }
+.ship-family-branch.expanded > .ship-family-trigger > i { color: var(--amber); transform: rotate(180deg); }
+.ship-variant-submenu { display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(-5px); transition: grid-template-rows 260ms cubic-bezier(.2,.8,.2,1), opacity 180ms ease, transform 260ms ease; }
+.ship-variant-submenu > div { min-height: 0; overflow: hidden; display: grid; gap: 5px; }
+.ship-family-branch.expanded > .ship-variant-submenu { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
+.ship-family-menu .ship-variant-submenu button { width: calc(100% - 18px); min-height: 48px; margin-left: 18px; padding: 7px 10px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; border: 1px solid rgba(111, 160, 170, .16); border-left: 2px solid rgba(111, 160, 170, .3); color: #afc4c7; background: rgba(4, 14, 21, .54); cursor: pointer; text-align: left; }
+.ship-family-menu .ship-variant-submenu button:first-child { margin-top: 6px; }
+.ship-family-menu .ship-variant-submenu button:last-child { margin-bottom: 2px; }
+.ship-family-menu .ship-variant-submenu button:hover, .ship-family-menu .ship-variant-submenu button.active { border-color: rgba(242, 189, 105, .42); border-left-color: var(--amber); color: #ffe2ac; background: rgba(72, 50, 22, .24); }
+.ship-family-menu .ship-variant-submenu button small { color: #748890; font-size: 12px; }
+.mission-profile-source { display: grid; gap: 5px; margin-bottom: 10px; color: #829ba2; }
+.route-profile-summary { margin-bottom: 10px; padding: 10px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; border: 1px solid rgba(80, 223, 206, .2); background: rgba(17, 49, 53, .22); color: #78989c; text-align: center; }
+.route-profile-summary strong { color: #c9eeea; }
+.mission-profile-error { margin: 8px 0 12px; padding: 9px; border-left: 2px solid var(--red); color: #d18f88; background: rgba(80, 28, 29, .2); font-size: 12px; }
 .module-picker { display: grid; gap: 6px; margin-top: 10px; }
 .module-picker > label { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 7px; padding: 5px 0; }
 .module-picker small { color: #718b92; }
@@ -1372,6 +1415,7 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .mission-costs strong, .technical-stop-comparison strong { grid-column: 1 / -1; color: #bdcfcc; }
 @media (max-width: 1180px) { .shipyard-builder-grid { grid-template-columns: 1fr; } }
 .fleet-card-actions button:first-child { border-color: rgba(80, 223, 206, 0.3); color: #c5f6ee; }
+.fleet-card-actions .sell-ship-button { grid-column: 1 / -1; border-color: rgba(255, 124, 121, .3); color: #e4aaa6; background: rgba(91, 31, 32, .2); }
 .fleet-card-actions.single-action { grid-template-columns: 1fr; }
 .ship-family-menu { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 8px; }
 .ship-family-menu button { min-height: 58px; padding: 9px 11px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; border: 1px solid var(--border); color: #9fb2b7; background: rgba(5, 16, 24, 0.66); cursor: pointer; text-align: left; }

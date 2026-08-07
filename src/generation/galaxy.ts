@@ -749,7 +749,7 @@ export function createGeneratedScenario(
           `regional-${index + 1}-${localIndex + 1}`,
           index % 3 === 0 ? "player" : "orbital-regional",
           [system.hubPortId!, localPort.id],
-          "sparrow-shuttle",
+          "pioneer-regional",
           1,
           0.92,
         ),

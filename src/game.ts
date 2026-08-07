@@ -1030,6 +1030,32 @@ export function buyShip(
   return placeShipPurchaseAgreement(state, [{ shipTypeId, quantity }], shipTypes);
 }
 
+export function sellShip(
+  state: GameState,
+  shipId: string,
+  shipTypes: readonly ShipType[],
+): GameActionResult {
+  requirePlaying(state);
+  const ship = state.fleet.find((candidate) => candidate.id === shipId);
+  if (!ship) throw new Error("舰船不存在");
+  const hasPendingAssignment = state.pendingFleetChanges.some((change) =>
+    change.shipId === shipId && change.status === "pending" && change.toRouteId !== null
+  );
+  if (ship.routeId || ship.plannedRouteId || ship.reserveForRouteId || hasPendingAssignment) {
+    throw new Error("只能出售未被分配、预定或设为航线备用的舰船");
+  }
+  if (state.shipPurchaseOrders.some((order) => order.replacementShipIds?.includes(shipId))) {
+    throw new Error("该舰船已有替代订单，不能直接出售");
+  }
+  const shipType = shipTypes.find((candidate) => candidate.id === ship.shipTypeId);
+  if (!shipType) throw new Error("舰船型号不存在");
+  const revenue = shipResaleValue(ship, shipType, state.day);
+  return {
+    state: { ...state, cash: state.cash + revenue, fleet: state.fleet.filter((candidate) => candidate.id !== shipId) },
+    message: `已出售 ${ship.name}，获得 ${revenue.toFixed(0)} Cr`,
+  };
+}
+
 export function orderShipReplacement(
   state: GameState,
   shipId: string,

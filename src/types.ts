@@ -21,7 +21,8 @@ export interface ShipHullVariant {
   structureMassTonnes: number;
   fuelCapacityTonnes: number;
   maximumTakeoffMassTonnes: number;
-  sublightEngineSlots: number;
+  /** Fixed number of sublight engines defined by the hull-family design. */
+  sublightEngineCount: number;
   ftlDriveSlots: number;
   optionalModuleSlots: number;
   cabinSpace: number;

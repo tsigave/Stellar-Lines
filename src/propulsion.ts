@@ -27,9 +27,9 @@ export const STANDARD_TARGET_SPEED_KM_PER_SECOND = Number((
 
 export const SUBLIGHT_ENGINE_MODELS: readonly SublightEngineModel[] = [
   {
-    id: "helios-pf-860", manufacturer: "Helios Propulsion", family: "PF", model: "860",
-    installationClass: 3, massTonnes: 80, price: 245_000, fixedMaintenanceCostPerDay: 280,
-    maintenancePerFlightHour: 34, maximumThrustMN: 8.6, maximumContinuousThrustMN: 7.74,
+    id: "helios-pf-860", manufacturer: "Helios Propulsion", family: "PF", model: "PF-215",
+    installationClass: 3, massTonnes: 20, price: 61_250, fixedMaintenanceCostPerDay: 70,
+    maintenancePerFlightHour: 8.5, maximumThrustMN: 2.15, maximumContinuousThrustMN: 1.935,
     optimalThrustRatio: 0.68, economyThrustRatio: 0.8,
     directionalEfficiencyCurve: [
       { ratio: 0.5, efficiency: 0.56 }, { ratio: 0.68, efficiency: 0.65 },
@@ -37,9 +37,9 @@ export const SUBLIGHT_ENGINE_MODELS: readonly SublightEngineModel[] = [
     ], reliability: 0.968, highThrustWear: 0.16,
   },
   {
-    id: "frontier-tf-420", manufacturer: "边疆联合动力", family: "TF", model: "420",
-    installationClass: 2, massTonnes: 44, price: 128_000, fixedMaintenanceCostPerDay: 150,
-    maintenancePerFlightHour: 23, maximumThrustMN: 4.2, maximumContinuousThrustMN: 3.65,
+    id: "frontier-tf-420", manufacturer: "边疆联合动力", family: "TF", model: "TF-205E",
+    installationClass: 1, massTonnes: 14.667, price: 42_666.67, fixedMaintenanceCostPerDay: 50,
+    maintenancePerFlightHour: 7.667, maximumThrustMN: 1.9, maximumContinuousThrustMN: 1.65,
     optimalThrustRatio: 0.62, economyThrustRatio: 0.74,
     directionalEfficiencyCurve: [
       { ratio: 0.5, efficiency: 0.6 }, { ratio: 0.62, efficiency: 0.66 },
@@ -47,9 +47,9 @@ export const SUBLIGHT_ENGINE_MODELS: readonly SublightEngineModel[] = [
     ], reliability: 0.955, highThrustWear: 0.12,
   },
   {
-    id: "vector-sprint-1120", manufacturer: "矢量动力集团", family: "Sprint", model: "1120",
-    installationClass: 4, massTonnes: 106, price: 410_000, fixedMaintenanceCostPerDay: 460,
-    maintenancePerFlightHour: 52, maximumThrustMN: 11.2, maximumContinuousThrustMN: 9.52,
+    id: "vector-sprint-1120", manufacturer: "矢量动力集团", family: "Sprint", model: "Sprint-230",
+    installationClass: 4, massTonnes: 17.667, price: 68_333.33, fixedMaintenanceCostPerDay: 76.667,
+    maintenancePerFlightHour: 8.667, maximumThrustMN: 3.3, maximumContinuousThrustMN: 2.84,
     optimalThrustRatio: 0.72, economyThrustRatio: 0.84,
     directionalEfficiencyCurve: [
       { ratio: 0.5, efficiency: 0.52 }, { ratio: 0.72, efficiency: 0.63 },
@@ -57,19 +57,19 @@ export const SUBLIGHT_ENGINE_MODELS: readonly SublightEngineModel[] = [
     ], reliability: 0.975, highThrustWear: 0.22,
   },
   {
-    id: "atlas-titan-2480", manufacturer: "阿特拉斯重工", family: "Titan", model: "2480",
-    installationClass: 5, massTonnes: 215, price: 720_000, fixedMaintenanceCostPerDay: 780,
-    maintenancePerFlightHour: 82, maximumThrustMN: 24.8, maximumContinuousThrustMN: 20.6,
+    id: "atlas-titan-2480", manufacturer: "阿特拉斯重工", family: "Titan", model: "Titan-225E",
+    installationClass: 5, massTonnes: 71.667, price: 240_000, fixedMaintenanceCostPerDay: 260,
+    maintenancePerFlightHour: 27.333, maximumThrustMN: 7.5, maximumContinuousThrustMN: 7.2,
     optimalThrustRatio: 0.64, economyThrustRatio: 0.78,
     directionalEfficiencyCurve: [
       { ratio: 0.5, efficiency: 0.58 }, { ratio: 0.64, efficiency: 0.65 },
       { ratio: 0.78, efficiency: 0.62 }, { ratio: 0.9, efficiency: 0.56 }, { ratio: 1, efficiency: 0.5 },
-    ], reliability: 0.946, highThrustWear: 0.18,
+    ], reliability: 0.985, highThrustWear: 0.08,
   },
   {
-    id: "dawn-orbital-180", manufacturer: "曙光轨道工业", family: "Orbital", model: "180",
-    installationClass: 1, massTonnes: 18, price: 58_000, fixedMaintenanceCostPerDay: 72,
-    maintenancePerFlightHour: 12, maximumThrustMN: 1.8, maximumContinuousThrustMN: 1.55,
+    id: "dawn-orbital-180", manufacturer: "曙光轨道工业", family: "Orbital", model: "Orbital-200L",
+    installationClass: 1, massTonnes: 4.5, price: 14_500, fixedMaintenanceCostPerDay: 18,
+    maintenancePerFlightHour: 3, maximumThrustMN: 1, maximumContinuousThrustMN: 0.8,
     optimalThrustRatio: 0.65, economyThrustRatio: 0.76,
     directionalEfficiencyCurve: [
       { ratio: 0.5, efficiency: 0.58 }, { ratio: 0.65, efficiency: 0.64 },
@@ -113,14 +113,14 @@ export const FTL_DRIVE_MODELS: readonly FtlDriveModel[] = [
   },
   {
     id: "frontier-w2-economy", mode: "warp", manufacturer: "边疆联合动力", family: "Trail", model: "W2E",
-    installationClass: 2, massTonnes: 58, price: 270_000, fixedMaintenanceCostPerDay: 270,
+    installationClass: 1, massTonnes: 58, price: 270_000, fixedMaintenanceCostPerDay: 270,
     maintenancePerFlightHour: 25, minimumSpeedLyPerDay: 1.3, optimalSpeedLyPerDay: 1.9,
     maximumSpeedLyPerDay: 2.5, efficiencyCurve: ftlCurve(1.9, 2.5, 0.00582),
     reliability: 0.951, highSpeedWear: 0.1, minimumPortLevel: 1,
   },
   {
     id: "vector-w4-direct", mode: "warp", manufacturer: "矢量动力集团", family: "Direct", model: "W4",
-    installationClass: 4, massTonnes: 104, price: 590_000, fixedMaintenanceCostPerDay: 610,
+    installationClass: 3, massTonnes: 104, price: 590_000, fixedMaintenanceCostPerDay: 610,
     maintenancePerFlightHour: 55, minimumSpeedLyPerDay: 2.2, optimalSpeedLyPerDay: 3,
     maximumSpeedLyPerDay: 3.9, efficiencyCurve: ftlCurve(3, 3.9, 0.00652),
     reliability: 0.973, highSpeedWear: 0.24, minimumPortLevel: 3,
@@ -148,7 +148,7 @@ export const OPTIONAL_MODULES: readonly OptionalModule[] = [
 export const STANDARD_REFERENCE_HULL: ShipHullVariant = {
   id: "reference-medium-500", familyId: "reference-medium", name: "标准中程 500",
   installationClass: 3, structureMassTonnes: 300, fuelCapacityTonnes: 500,
-  maximumTakeoffMassTonnes: 1_000, sublightEngineSlots: 1, ftlDriveSlots: 1,
+  maximumTakeoffMassTonnes: 1_000, sublightEngineCount: 4, ftlDriveSlots: 1,
   optionalModuleSlots: 2, cabinSpace: 200, basePrice: 1_400_000, deliveryDays: 45,
   fixedMaintenanceCostPerDay: 1_900, minimumPortLevel: 3,
 };
@@ -170,6 +170,11 @@ export interface ResolveMissionInput {
   ftlSpeedLyPerDay?: number;
   thrustRatio?: number;
   targetSublightSpeedKmPerSecond?: number;
+  /** One-way physical-space distance from the origin port to the FTL entry point. */
+  departureSublightDistanceAu?: number;
+  /** One-way physical-space distance from the FTL exit point to the destination port. */
+  arrivalSublightDistanceAu?: number;
+  /** @deprecated Use separate departure/arrival distances. */
   sublightDistanceAu?: number;
   destinationReserveTonnes?: number;
   sublightEngines?: readonly SublightEngineModel[];
@@ -178,7 +183,6 @@ export interface ResolveMissionInput {
 }
 
 const FAMILY_FUEL_RATIO: Readonly<Record<string, number>> = {
-  "dawn-sparrow": 0.3,
   "frontier-pioneer": 0.68,
   "vector-fast": 0.84,
   "meridian-mainline": 1,
@@ -195,6 +199,21 @@ function installationClassForMass(massTonnes: number): 1 | 2 | 3 | 4 | 5 {
   if (massTonnes < 720) return 3;
   if (massTonnes < 1_300) return 4;
   return 5;
+}
+
+export const SUBLIGHT_ENGINE_COUNT_BY_FAMILY: Readonly<Record<string, number>> = {
+  "frontier-pioneer": 3,
+  "vector-fast": 4,
+  "meridian-mainline": 4,
+  "atlas-grand": 3,
+  "celestial-yacht": 2,
+  "aurora-clipper": 4,
+  "horizon-coach": 6,
+  "odyssey-sleeper": 5,
+};
+
+export function sublightEngineCountForFamily(familyId: string): number {
+  return SUBLIGHT_ENGINE_COUNT_BY_FAMILY[familyId] ?? 4;
 }
 
 export function defaultSublightEngineForHull(hull: Pick<ShipHullVariant, "installationClass">): SublightEngineModel {
@@ -230,7 +249,7 @@ export function projectShipTypeToV07(ship: ShipType): ShipType {
     id: `${ship.id}-hull`, familyId: ship.familyId, name: `${ship.name} 船体`, installationClass,
     structureMassTonnes: operatingDryMass, fuelCapacityTonnes: fuelCapacity,
     maximumTakeoffMassTonnes: operatingDryMass + fuelCapacity,
-    sublightEngineSlots: installationClass >= 5 ? 2 : 1,
+    sublightEngineCount: sublightEngineCountForFamily(ship.familyId),
     ftlDriveSlots: ship.supportedModes.some((mode) => mode !== "sublight") ? 1 : 0,
     optionalModuleSlots: installationClass <= 2 ? 2 : installationClass <= 4 ? 3 : 4,
     cabinSpace: ship.cabinSpace, basePrice: ship.purchasePrice * 0.62,
@@ -240,6 +259,7 @@ export function projectShipTypeToV07(ship: ShipType): ShipType {
   };
   const engine = defaultSublightEngineForHull(provisionalHull);
   const drive = defaultFtlDriveForShipType(ship, provisionalHull);
+  const engineCount = provisionalHull.sublightEngineCount;
   const retention = STANDARD_SUBLIGHT_RETENTION;
   const maximumRange = drive
     ? Math.max(0, Math.log((operatingDryMass + fuelCapacity) * retention ** 2 / operatingDryMass) /
@@ -252,15 +272,15 @@ export function projectShipTypeToV07(ship: ShipType): ShipType {
     operatingDryMassTonnes: operatingDryMass,
     fuelCapacityTonnes: fuelCapacity,
     maximumTakeoffMassTonnes: operatingDryMass + fuelCapacity,
-    purchasePrice: Math.round(provisionalHull.basePrice + engine.price * provisionalHull.sublightEngineSlots + (drive?.price ?? 0)),
-    fixedMaintenanceCostPerDay: Math.round(provisionalHull.fixedMaintenanceCostPerDay + engine.fixedMaintenanceCostPerDay * provisionalHull.sublightEngineSlots + (drive?.fixedMaintenanceCostPerDay ?? 0)),
-    maintenancePerFlightHour: engine.maintenancePerFlightHour * provisionalHull.sublightEngineSlots + (drive?.maintenancePerFlightHour ?? 0),
+    purchasePrice: Math.round(provisionalHull.basePrice + engine.price * engineCount + (drive?.price ?? 0)),
+    fixedMaintenanceCostPerDay: Math.round(provisionalHull.fixedMaintenanceCostPerDay + engine.fixedMaintenanceCostPerDay * engineCount + (drive?.fixedMaintenanceCostPerDay ?? 0)),
+    maintenancePerFlightHour: engine.maintenancePerFlightHour * engineCount + (drive?.maintenancePerFlightHour ?? 0),
     reliability: Math.min(engine.reliability, drive?.reliability ?? 1),
     supportedModes,
     speedByMode: { sublight: ship.speedByMode.sublight ?? 1, ...(drive ? { [drive.mode]: drive.maximumSpeedLyPerDay } : {}) },
     maxRangeByMode: { ...(ship.maxRangeByMode.sublight === undefined ? {} : { sublight: ship.maxRangeByMode.sublight }), ...(drive ? { [drive.mode]: round(maximumRange, 2) } : {}) },
     fuelPerDistanceByMode: { ...(ship.fuelPerDistanceByMode.sublight === undefined ? {} : { sublight: ship.fuelPerDistanceByMode.sublight }), ...(drive ? { [drive.mode]: round(ftlKAtSpeed(drive, drive.maximumSpeedLyPerDay) * 1_000, 4) } : {}) },
-    sublightThrustMN: engine.maximumThrustMN * provisionalHull.sublightEngineSlots,
+    sublightThrustMN: engine.maximumThrustMN * engineCount,
     maximumSublightSpeedKmPerSecond: Math.max(STANDARD_TARGET_SPEED_KM_PER_SECOND, ship.maximumSublightSpeedKmPerSecond ?? 0),
     fuelOptimalThrustRatio: engine.optimalThrustRatio,
     hullVariantId: provisionalHull.id,
@@ -275,8 +295,8 @@ export function hullVariantFromShipType(ship: ShipType): ShipHullVariant {
   const installationClass = installationClassForMass(projected.operatingDryMassTonnes ?? projected.structuralMassTonnes);
   const engine = SUBLIGHT_ENGINE_MODELS.find((candidate) => candidate.id === projected.defaultSublightEngineModelId) ?? defaultSublightEngineForHull({ installationClass });
   const drive = FTL_DRIVE_MODELS.find((candidate) => candidate.id === projected.defaultFtlDriveModelId);
-  const engineSlots = installationClass >= 5 ? 2 : 1;
-  const componentMass = engine.massTonnes * engineSlots + (drive?.massTonnes ?? 0);
+  const engineCount = sublightEngineCountForFamily(projected.familyId);
+  const componentMass = engine.massTonnes * engineCount + (drive?.massTonnes ?? 0);
   const cabinMass = cabinInstallationMass({ economy: projected.seats, business: 0, premium: 0 });
   const fixedAssets = projected.cabinSpace * 0.07;
   return {
@@ -284,12 +304,12 @@ export function hullVariantFromShipType(ship: ShipType): ShipHullVariant {
     installationClass, structureMassTonnes: Math.max(10, (projected.operatingDryMassTonnes ?? projected.structuralMassTonnes) - componentMass - cabinMass - fixedAssets),
     fuelCapacityTonnes: projected.fuelCapacityTonnes,
     maximumTakeoffMassTonnes: projected.maximumTakeoffMassTonnes ?? projected.structuralMassTonnes + projected.fuelCapacityTonnes,
-    sublightEngineSlots: engineSlots, ftlDriveSlots: drive ? 1 : 0,
+    sublightEngineCount: engineCount, ftlDriveSlots: drive ? 1 : 0,
     optionalModuleSlots: installationClass <= 2 ? 2 : installationClass <= 4 ? 3 : 4,
     cabinSpace: projected.cabinSpace,
-    basePrice: Math.max(0, projected.purchasePrice - engine.price * engineSlots - (drive?.price ?? 0)),
+    basePrice: Math.max(0, projected.purchasePrice - engine.price * engineCount - (drive?.price ?? 0)),
     deliveryDays: Math.max(7, Math.round(10 + projected.structuralMassTonnes / 24)),
-    fixedMaintenanceCostPerDay: Math.max(0, projected.fixedMaintenanceCostPerDay - engine.fixedMaintenanceCostPerDay * engineSlots - (drive?.fixedMaintenanceCostPerDay ?? 0)),
+    fixedMaintenanceCostPerDay: Math.max(0, projected.fixedMaintenanceCostPerDay - engine.fixedMaintenanceCostPerDay * engineCount - (drive?.fixedMaintenanceCostPerDay ?? 0)),
     minimumPortLevel: projected.minimumPortLevel,
   };
 }
@@ -404,7 +424,7 @@ export function resolveShipMission(input: ResolveMissionInput): ResolvedShipPerf
   if (modules.some((module) => module.installationClass > hull.installationClass)) reasons.push("选装模块安装级别超过船体限制");
 
   const engineModel = engine ?? SUBLIGHT_ENGINE_MODELS[0]!;
-  const engineCount = hull.sublightEngineSlots;
+  const engineCount = hull.sublightEngineCount;
   const cabinMass = cabinInstallationMass(build.cabins);
   const crewAndFixedAssetsMass = hull.cabinSpace * 0.07;
   const operatingDryMass = hull.structureMassTonnes + engineModel.massTonnes * engineCount +
@@ -416,20 +436,22 @@ export function resolveShipMission(input: ResolveMissionInput): ResolvedShipPerf
   const fuelCapacity = hull.fuelCapacityTonnes + modules.reduce((sum, module) => sum + (module.fuelCapacityBonusTonnes ?? 0), 0);
   const thrustRatio = Math.max(0.5, Math.min(1, input.thrustRatio ?? engineModel.economyThrustRatio));
   const targetSpeed = Math.max(1, input.targetSublightSpeedKmPerSecond ?? STANDARD_TARGET_SPEED_KM_PER_SECOND);
-  const sublightDistance = Math.max(0.00001, input.sublightDistanceAu ?? STANDARD_SUBLIGHT_DISTANCE_AU);
+  const fallbackSublightDistance = input.sublightDistanceAu ?? STANDARD_SUBLIGHT_DISTANCE_AU;
+  const departureSublightDistance = Math.max(0.00001, input.departureSublightDistanceAu ?? fallbackSublightDistance);
+  const arrivalSublightDistance = Math.max(0.00001, input.arrivalSublightDistanceAu ?? fallbackSublightDistance);
   const finalMass = operatingDryMass + payloadMass + reserve;
-  const arrival = solveSublightBackwards(finalMass, engineModel, engineCount, sublightDistance, thrustRatio, targetSpeed);
+  const arrival = solveSublightBackwards(finalMass, engineModel, engineCount, arrivalSublightDistance, thrustRatio, targetSpeed);
   const speed = drive ? Math.max(drive.minimumSpeedLyPerDay, Math.min(drive.maximumSpeedLyPerDay, input.ftlSpeedLyPerDay ?? drive.maximumSpeedLyPerDay)) : 0;
   const k = drive ? ftlKAtSpeed(drive, speed) : 0;
   const ftlStartMass = arrival.startMass * Math.exp(k * Math.max(0, input.distanceLightYears));
-  const departure = solveSublightBackwards(ftlStartMass, engineModel, engineCount, sublightDistance, thrustRatio, targetSpeed);
+  const departure = solveSublightBackwards(ftlStartMass, engineModel, engineCount, departureSublightDistance, thrustRatio, targetSpeed);
   const initialFuel = departure.startMass - operatingDryMass - payloadMass;
   const takeoffMass = departure.startMass;
   const ftlFuel = ftlStartMass - arrival.startMass;
   const rawPhases: MissionPhasePerformance[] = [
-    { kind: "departure", distance: sublightDistance, hours: departure.hours, fuelBurnTonnes: departure.fuel, startMassTonnes: departure.startMass, endMassTonnes: departure.endMass },
+    { kind: "departure", distance: departureSublightDistance, hours: departure.hours, fuelBurnTonnes: departure.fuel, startMassTonnes: departure.startMass, endMassTonnes: departure.endMass },
     { kind: "interstellar", distance: Math.max(0, input.distanceLightYears), hours: speed > 0 ? input.distanceLightYears / speed * 24 : 0, fuelBurnTonnes: ftlFuel, startMassTonnes: ftlStartMass, endMassTonnes: arrival.startMass },
-    { kind: "arrival", distance: sublightDistance, hours: arrival.hours, fuelBurnTonnes: arrival.fuel, startMassTonnes: arrival.startMass, endMassTonnes: arrival.endMass },
+    { kind: "arrival", distance: arrivalSublightDistance, hours: arrival.hours, fuelBurnTonnes: arrival.fuel, startMassTonnes: arrival.startMass, endMassTonnes: arrival.endMass },
   ];
   const phases = rawPhases.map((phase): MissionPhasePerformance => ({
     ...phase,

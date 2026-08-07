@@ -175,16 +175,6 @@ export const PROOF_OF_CONCEPT_WORLD_LEGS: readonly WorldLeg[] = [
 
 const CORE_PROOF_OF_CONCEPT_SHIPS: readonly ShipType[] = [
   {
-    id: "sparrow-shuttle", name: "Sparrow Shuttle", seats: 32, purchasePrice: 180_000,
-    manufacturer: "曙光轨道工业", familyId: "dawn-sparrow", familyName: "麻雀", variant: "S32",
-    structuralMassTonnes: 90, fuelCapacityTonnes: 18, fixedMaintenanceCostPerDay: 450, cabinSpace: 32,
-    description: "轻型星系内接驳艇，维护简单，适合短途支线与低等级星港。",
-    supportedModes: ["sublight"], speedByMode: { sublight: 1 },
-    maxRangeByMode: { sublight: 24 }, fuelPerDistanceByMode: { sublight: 0.42 },
-    maintenancePerFlightHour: 18, crewCostPerFlightHour: 16, reliability: 0.97,
-    comfort: 52, minimumPortLevel: 1, turnaroundHours: 0.75, operationalAvailability: 0.95,
-  },
-  {
     id: "pioneer-regional", name: "Pioneer Regional", seats: 64, purchasePrice: 520_000,
     manufacturer: "边疆联合船厂", familyId: "frontier-pioneer", familyName: "先驱", variant: "R64",
     structuralMassTonnes: 220, fuelCapacityTonnes: 60, fixedMaintenanceCostPerDay: 950, cabinSpace: 64,
@@ -309,18 +299,6 @@ function familyVariant(
  */
 const SHIP_CATALOG: readonly ShipType[] = [
   ...CORE_PROOF_OF_CONCEPT_SHIPS,
-  familyVariant("sparrow-shuttle", {
-    id: "sparrow-shuttle-s18", name: "麻雀 S18型", variant: "S18", seats: 18, cabinSpace: 18,
-    purchasePrice: 125_000, structuralMassTonnes: 64, fuelCapacityTonnes: 13, fixedMaintenanceCostPerDay: 320,
-    maxRangeByMode: { sublight: 20 }, fuelPerDistanceByMode: { sublight: 0.36 }, turnaroundHours: 0.55,
-    description: "麻雀系列的双机组轻型型号，用最低固定成本覆盖极稀薄的星系内客流。",
-  }),
-  familyVariant("sparrow-shuttle", {
-    id: "sparrow-shuttle-s48", name: "麻雀 S48型", variant: "S48", seats: 48, cabinSpace: 48,
-    purchasePrice: 255_000, structuralMassTonnes: 128, fuelCapacityTonnes: 26, fixedMaintenanceCostPerDay: 610,
-    speedByMode: { sublight: 0.95 }, maxRangeByMode: { sublight: 28 }, fuelPerDistanceByMode: { sublight: 0.5 }, turnaroundHours: 0.95,
-    description: "加长客舱与起落架强化的麻雀型号，适合繁忙枢纽的星系内接驳。",
-  }),
   familyVariant("pioneer-regional", {
     id: "pioneer-regional-r40", name: "先驱 R40型", variant: "R40", seats: 40, cabinSpace: 40,
     purchasePrice: 390_000, structuralMassTonnes: 165, fuelCapacityTonnes: 48, fixedMaintenanceCostPerDay: 720,
@@ -510,7 +488,7 @@ export const PROOF_OF_CONCEPT_ROUTES: readonly Route[] = [
   route(
     "local-sol-ring", "orbital-regional", "Sol Local Ring",
     ["terra-central", "luna-freeport", "sol-hub", "mars-dome"],
-    "sparrow-shuttle", 3, 0.9, "loop",
+    "pioneer-regional", 3, 0.9, "loop",
   ),
   route(
     "local-alpha", "orbital-regional", "Alpha Local",

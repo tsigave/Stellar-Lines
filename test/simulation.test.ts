@@ -5,6 +5,7 @@ import {
   buildJourneyOptions,
   buildFareCurveData,
   buildRouteServices,
+  missionProfileForRoute,
   assignShipsToFleetConfiguration,
   buyShip,
   chooseJourneys,
@@ -67,6 +68,7 @@ import {
   shipMaintenanceState,
   shipAgeYears,
   shipComfortAtAge,
+  shipResaleValue,
   MAINTENANCE_DUE_HOURS,
   MAINTENANCE_REQUIRED_HOURS,
   setAutoMaintenanceThreshold,
@@ -76,6 +78,7 @@ import {
   quoteFuelContract,
   setFuelAutoContractPolicy,
   setFuelWarehouseRental,
+  sellShip,
   signFuelContract,
   updateFleetConfiguration,
   compareTechnicalStop,
@@ -88,6 +91,7 @@ import {
   STANDARD_REFERENCE_BUILD,
   STANDARD_REFERENCE_HULL,
   SUBLIGHT_ENGINE_MODELS,
+  SUBLIGHT_ENGINE_COUNT_BY_FAMILY,
   advanceGameDay,
   closePlayerRoute,
   configureShipCabins,
@@ -150,6 +154,27 @@ test("v0.7 推力改变亚光速航时，效率曲线改变燃料且滑行阶段
   assert.ok(SUBLIGHT_ENGINE_MODELS[0]!.directionalEfficiencyCurve.length >= 3);
 });
 
+test("v0.7.1 亚光速引擎推力覆盖多个等级且同系列固定台数", () => {
+  const thrusts = SUBLIGHT_ENGINE_MODELS.map((engine) => engine.maximumThrustMN);
+  assert.ok(Math.max(...thrusts) / Math.min(...thrusts) >= 6);
+  assert.equal(new Set(SUBLIGHT_ENGINE_MODELS.map((engine) => engine.massTonnes)).size, SUBLIGHT_ENGINE_MODELS.length);
+  assert.ok(SUBLIGHT_ENGINE_MODELS.filter((engine) => engine.installationClass <= 1).length >= 2);
+  assert.equal(STANDARD_REFERENCE_HULL.sublightEngineCount, 4);
+  assert.equal(SUBLIGHT_ENGINE_COUNT_BY_FAMILY["vector-fast"], 4);
+  assert.equal(SUBLIGHT_ENGINE_COUNT_BY_FAMILY["atlas-grand"], 3);
+  assert.ok(new Set(Object.values(SUBLIGHT_ENGINE_COUNT_BY_FAMILY)).size >= 4);
+  const countsByFamily = new Map<string, Set<number>>();
+  for (const ship of PROOF_OF_CONCEPT_SCENARIO.shipTypes) {
+    const hull = hullVariantFromShipType(ship);
+    assert.ok(hull.sublightEngineCount >= 2);
+    const counts = countsByFamily.get(ship.familyId) ?? new Set<number>();
+    counts.add(hull.sublightEngineCount);
+    countsByFamily.set(ship.familyId, counts);
+    assert.equal(resolveShipMission({ build: defaultBuildForShipType(ship), hull, distanceLightYears: 1 }).feasible, true);
+  }
+  assert.ok([...countsByFamily.values()].every((counts) => counts.size === 1));
+});
+
 test("v0.7 技术停靠能让超长航程可行并增加周转和港口成本", () => {
   const comparison = compareTechnicalStop({ build: STANDARD_REFERENCE_BUILD, hull: STANDARD_REFERENCE_HULL, distanceLightYears: 140 });
   assert.equal(comparison.direct.feasible, false);
@@ -158,10 +183,11 @@ test("v0.7 技术停靠能让超长航程可行并增加周转和港口成本", 
   assert.ok(comparison.withTechnicalStop.addedPortCost > 0);
 });
 
-test("v0.7 九个系列三十个子型号都具备组件引用并通过质量油箱平衡检查", () => {
+test("v0.7.1 八个系列二十七个 FTL 子型号都具备组件引用并通过质量油箱平衡检查", () => {
   const ships = PROOF_OF_CONCEPT_SCENARIO.shipTypes;
-  assert.equal(ships.length, 30);
-  assert.equal(new Set(ships.map((ship) => ship.familyId)).size, 9);
+  assert.equal(ships.length, 27);
+  assert.equal(new Set(ships.map((ship) => ship.familyId)).size, 8);
+  assert.ok(ships.every((ship) => ship.supportedModes.some((mode) => mode === "warp" || mode === "hyperspace")));
   for (const ship of ships) {
     assert.ok(ship.hullVariantId && ship.defaultSublightEngineModelId);
     assert.ok((ship.operatingDryMassTonnes ?? 0) > 0);
@@ -229,6 +255,44 @@ test("v0.7 航线与班表读取实际采购配置并保留三个阶段的独立
   assert.notEqual(standard.fuelConsumptionPerDepartureFull, alternative.fuelConsumptionPerDepartureFull);
   assert.ok(standard.departureSublightHours! > 0 && standard.interstellarHours! > 0 && standard.arrivalSublightHours! > 0);
   assert.ok(Math.abs(standard.inVehicleHours - standard.departureSublightHours! - standard.interstellarHours! - standard.arrivalSublightHours!) < 1e-6);
+});
+
+test("v0.7.1 任务剖面分别使用离港与进港实体距离", () => {
+  const mission = resolveShipMission({
+    build: STANDARD_REFERENCE_BUILD,
+    hull: STANDARD_REFERENCE_HULL,
+    distanceLightYears: 12,
+    departureSublightDistanceAu: 0.05,
+    arrivalSublightDistanceAu: 0.3,
+  });
+  assert.equal(mission.phases[0]!.distance, 0.05);
+  assert.equal(mission.phases[2]!.distance, 0.3);
+  assert.notEqual(mission.phases[0]!.hours, mission.phases[2]!.hours);
+});
+
+test("v0.7.1 现实航线任务剖面从开放航路与两端星港读取真实距离", () => {
+  const ports: Starport[] = [
+    { id: "a", systemId: "a", name: "A", population: 1, economy: 1, business: 1, tourism: 1, administration: 1, portLevel: 5, dailyCapacity: 100, fuelPrice: 2, serviceFee: 10, hyperspaceExitDistanceKm: 14_959_787.07 },
+    { id: "b", systemId: "b", name: "B", population: 1, economy: 1, business: 1, tourism: 1, administration: 1, portLevel: 5, dailyCapacity: 100, fuelPrice: 2, serviceFee: 10, hyperspaceExitDistanceKm: 29_919_574.14 },
+  ];
+  const route: Route = { id: "profile", companyId: "player", name: "Profile", kind: "return", routingMode: "hyperspace", stops: ports.map((port) => ({ portId: port.id, stopType: "commercial", minimumStopHours: 1 })), shipTypeId: "meridian-liner", assignedShips: 1, pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1, premium: 1 } }, maintenanceAllowanceHours: 1, active: true };
+  const profile = missionProfileForRoute(route, ports, [{ id: "a-b", fromPortId: "a", toPortId: "b", mode: "hyperspace", distance: 42, hazard: 0, timeModifier: 1, fuelModifier: 1, isOpen: true }], "hyperspace");
+  assert.equal(profile.interstellarDistanceLightYears, 42);
+  assert.ok(Math.abs(profile.departureSublightDistanceAu - 0.1) < 1e-9);
+  assert.ok(Math.abs(profile.arrivalSublightDistanceAu - 0.2) < 1e-9);
+});
+
+test("v0.7.1 只能出售未被任何航线占用或预定的舰船", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, generated.galaxy.ports[0]!.id, generated.scenario.shipTypes);
+  const ship = game.fleet[0]!;
+  const type = generated.scenario.shipTypes.find((candidate) => candidate.id === ship.shipTypeId)!;
+  const revenue = shipResaleValue(ship, type, game.day);
+  const sold = sellShip(game, ship.id, generated.scenario.shipTypes).state;
+  assert.equal(sold.fleet.length, game.fleet.length - 1);
+  assert.equal(sold.cash, game.cash + revenue);
+  assert.throws(() => sellShip({ ...game, fleet: game.fleet.map((item) => ({ ...item, routeId: "assigned" })) }, ship.id, generated.scenario.shipTypes), /只能出售/);
+  assert.throws(() => sellShip({ ...game, fleet: game.fleet.map((item) => ({ ...item, plannedRouteId: "planned" })) }, ship.id, generated.scenario.shipTypes), /只能出售/);
 });
 
 function configureShipsForTest(
@@ -807,10 +871,10 @@ test("事件只在开始后生效，并在恢复期平滑消退", () => {
   assert.equal(marketEventDemandMultiplier([event], 25, "a", "c", "business"), 2);
 });
 
-test("概念验证场景包含20个星港、30种系列化船型且所有航线有效", () => {
+test("概念验证场景包含20个星港、27种 FTL 系列化船型且所有航线有效", () => {
   assert.equal(PROOF_OF_CONCEPT_SCENARIO.ports.length, 20);
-  assert.equal(PROOF_OF_CONCEPT_SCENARIO.shipTypes.length, 30);
-  assert.equal(new Set(PROOF_OF_CONCEPT_SCENARIO.shipTypes.map((ship) => ship.familyId)).size, 9);
+  assert.equal(PROOF_OF_CONCEPT_SCENARIO.shipTypes.length, 27);
+  assert.equal(new Set(PROOF_OF_CONCEPT_SCENARIO.shipTypes.map((ship) => ship.familyId)).size, 8);
   assert.equal(PROOF_OF_CONCEPT_SCENARIO.shipTypes.filter((ship) => ship.familyId === "vector-fast").length, 6);
   assert.ok(PROOF_OF_CONCEPT_SCENARIO.shipTypes.every((shipType) =>
     shipType.supportedModes.filter((mode) => mode === "warp" || mode === "hyperspace").length <= 1,
@@ -1062,7 +1126,7 @@ test("舰船批量采购会进入交付队列，并以空舱交付且遵守 6:3:
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
   const base = generated.galaxy.ports[0]!;
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
-  const shuttle = generated.scenario.shipTypes.find((ship) => ship.id === "sparrow-shuttle")!;
+  const shuttle = generated.scenario.shipTypes.find((ship) => ship.id === "pioneer-regional")!;
   const startingCash = game.cash;
   const quote = quoteShipPurchaseAgreement(game, [{ shipTypeId: shuttle.id, quantity: 3 }], generated.scenario.shipTypes);
   game = buyShip(game, shuttle.id, generated.scenario.shipTypes, 3).state;
@@ -1077,7 +1141,7 @@ test("舰船批量采购会进入交付队列，并以空舱交付且遵守 6:3:
   assert.throws(() => configureShipCabins(
     game,
     purchased[0]!.id,
-    { premium: 6, business: 0, economy: 0 },
+    { premium: 11, business: 0, economy: 0 },
     generated.scenario.shipTypes,
   ), /超过/);
 
@@ -1101,12 +1165,12 @@ test("同一船型可维护多个统一方案并批量分配舰船", () => {
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
   const base = generated.galaxy.ports[0]!;
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, base.id);
-  game = buyShip(game, "sparrow-shuttle", generated.scenario.shipTypes, 3).state;
+  game = buyShip(game, "pioneer-regional", generated.scenario.shipTypes, 3).state;
   game = deliverAllOrdersForTest(game, generated.scenario.shipTypes);
-  const shuttles = game.fleet.filter((ship) => ship.shipTypeId === "sparrow-shuttle");
+  const shuttles = game.fleet.filter((ship) => ship.shipTypeId === "pioneer-regional");
   game = createFleetConfiguration(
     game,
-    "sparrow-shuttle",
+    "pioneer-regional",
     "通勤方案",
     { premium: 0, business: 4, economy: 20 },
     generated.scenario.shipTypes,
@@ -1114,7 +1178,7 @@ test("同一船型可维护多个统一方案并批量分配舰船", () => {
   const commuter = game.fleetConfigurations.at(-1)!;
   game = createFleetConfiguration(
     game,
-    "sparrow-shuttle",
+    "pioneer-regional",
     "高端方案",
     { premium: 4, business: 0, economy: 8 },
     generated.scenario.shipTypes,
@@ -1123,7 +1187,7 @@ test("同一船型可维护多个统一方案并批量分配舰船", () => {
   game = assignShipsToFleetConfiguration(game, commuter.id, shuttles.slice(0, 2).map((ship) => ship.id)).state;
   game = assignShipsToFleetConfiguration(game, premium.id, [shuttles[2]!.id]).state;
 
-  assert.equal(game.fleetConfigurations.filter((configuration) => configuration.shipTypeId === "sparrow-shuttle").length, 2);
+  assert.equal(game.fleetConfigurations.filter((configuration) => configuration.shipTypeId === "pioneer-regional").length, 2);
   assert.equal(game.fleet.filter((ship) => ship.configurationId === commuter.id).length, 2);
   assert.equal(game.fleet.filter((ship) => ship.configurationId === premium.id).length, 1);
 
@@ -1160,7 +1224,7 @@ test("多型号采购协议叠加批量优惠，热度延长排产且现货次�
   const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
   const types = generated.scenario.shipTypes;
   let game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, generated.galaxy.ports[0]!.id, types);
-  const sparrow = types.find((ship) => ship.id === "sparrow-shuttle")!;
+  const sparrow = types.find((ship) => ship.id === "arrow-express")!;
   const pioneer = types.find((ship) => ship.id === "pioneer-regional")!;
   const agreement = quoteShipPurchaseAgreement(game, [
     { shipTypeId: sparrow.id, quantity: 3 },
@@ -1183,7 +1247,7 @@ test("多型号采购协议叠加批量优惠，热度延长排产且现货次�
   assert.ok(hot.lines[0]!.deliveryDay > cold.lines[0]!.deliveryDay);
   assert.equal(stock.lines[0]!.deliveryDay, game.day + 1);
 
-  game = placeShipPurchaseAgreement(game, [
+  game = placeShipPurchaseAgreement({ ...game, cash: 20_000_000 }, [
     { shipTypeId: sparrow.id, quantity: 3 },
     { shipTypeId: pioneer.id, quantity: 3 },
   ], types).state;
@@ -1246,7 +1310,7 @@ test("维护准备金保留折扣，但现金只在实际大修时支出", () =>
   const vectorFleet = ["comet-courier", "arrow-express", "vector-executive"].map(owned);
   const discounted = fleetFixedMaintenanceCost(vectorFleet, types);
   const mixed = fleetFixedMaintenanceCost(
-    ["sparrow-shuttle", "pioneer-regional", "meridian-liner"].map(owned),
+    ["pioneer-regional", "meridian-liner", "atlas-liner"].map(owned),
     types,
   );
   assert.ok(discounted.supplierDiscount > 0);

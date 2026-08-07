@@ -10,6 +10,7 @@ import {
   estimateSublightTransit,
 } from "./fuel.js";
 import {
+  ASTRONOMICAL_UNIT_KM,
   defaultBuildForShipType,
   hullVariantFromShipType,
   resolveShipMission,
@@ -36,6 +37,95 @@ export interface BuildRouteServicesOptions {
 }
 
 export const MAX_INTERSTELLAR_SPEED_LY_PER_DAY = 10;
+
+export interface RouteMissionProfile {
+  routeId: string;
+  mode: Extract<TravelMode, "warp" | "hyperspace">;
+  departureSublightDistanceAu: number;
+  interstellarDistanceLightYears: number;
+  arrivalSublightDistanceAu: number;
+}
+
+function shortestProfilePath(
+  fromPortId: string,
+  toPortId: string,
+  worldLegs: readonly WorldLeg[],
+  mode: RouteMissionProfile["mode"],
+): readonly WorldLeg[] | undefined {
+  const usable = worldLegs.filter((leg) => leg.isOpen && (leg.mode === "sublight" || leg.mode === mode));
+  const nodes = new Set(usable.flatMap((leg) => [leg.fromPortId, leg.toPortId]));
+  const distance = new Map<string, number>([[fromPortId, 0]]);
+  const previous = new Map<string, { nodeId: string; leg: WorldLeg }>();
+  const unvisited = new Set(nodes);
+  while (unvisited.size > 0) {
+    let current: string | undefined;
+    let best = Number.POSITIVE_INFINITY;
+    for (const nodeId of unvisited) {
+      const candidate = distance.get(nodeId) ?? Number.POSITIVE_INFINITY;
+      if (candidate < best) { current = nodeId; best = candidate; }
+    }
+    if (!current || !Number.isFinite(best)) break;
+    if (current === toPortId) break;
+    unvisited.delete(current);
+    for (const leg of usable) {
+      const neighbor = leg.fromPortId === current ? leg.toPortId : leg.toPortId === current ? leg.fromPortId : undefined;
+      if (!neighbor || !unvisited.has(neighbor)) continue;
+      const edgeWeight = leg.mode === "sublight" ? leg.distance / 1_000 : leg.distance;
+      if (best + edgeWeight < (distance.get(neighbor) ?? Number.POSITIVE_INFINITY)) {
+        distance.set(neighbor, best + edgeWeight);
+        previous.set(neighbor, { nodeId: current, leg: orientLeg(leg, current) });
+      }
+    }
+  }
+  if (fromPortId === toPortId) return [];
+  if (!previous.has(toPortId)) return undefined;
+  const path: WorldLeg[] = [];
+  let cursor = toPortId;
+  while (cursor !== fromPortId) {
+    const step = previous.get(cursor);
+    if (!step) return undefined;
+    path.unshift(step.leg);
+    cursor = step.nodeId;
+  }
+  return path;
+}
+
+/** Resolve the one-way physical profile represented by an existing route. */
+export function missionProfileForRoute(
+  route: Route,
+  ports: readonly Starport[],
+  worldLegs: readonly WorldLeg[],
+  mode: RouteMissionProfile["mode"],
+): RouteMissionProfile {
+  if (route.routingMode && route.routingMode !== mode) {
+    throw new Error(`航线使用${route.routingMode === "warp" ? "曲率" : "超空间"}航行，与当前驱动器不兼容`);
+  }
+  if (route.stops.length < 2) throw new Error("航线至少需要两个停靠点");
+  const allLegs: WorldLeg[] = [];
+  for (let index = 0; index < route.stops.length - 1; index += 1) {
+    const from = route.stops[index]!;
+    const to = route.stops[index + 1]!;
+    const path = shortestProfilePath(from.portId, to.portId, worldLegs, mode);
+    if (!path) throw new Error(`无法为航线 ${route.name} 找到开放的${mode === "warp" ? "曲率" : "超空间"}路径`);
+    allLegs.push(...path);
+  }
+  const fromPort = ports.find((port) => port.id === route.stops[0]!.portId);
+  const toPort = ports.find((port) => port.id === route.stops.at(-1)!.portId);
+  if (!fromPort || !toPort) throw new Error("航线停靠的星港不存在");
+  const departureKm = mode === "hyperspace"
+    ? fromPort.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(fromPort.systemId, mode)
+    : fromPort.warpExitDistanceKm ?? deterministicExitDistanceKm(fromPort.systemId, mode);
+  const arrivalKm = mode === "hyperspace"
+    ? toPort.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(toPort.systemId, mode)
+    : toPort.warpExitDistanceKm ?? deterministicExitDistanceKm(toPort.systemId, mode);
+  return {
+    routeId: route.id,
+    mode,
+    departureSublightDistanceAu: departureKm / ASTRONOMICAL_UNIT_KM,
+    interstellarDistanceLightYears: allLegs.filter((leg) => leg.mode === mode).reduce((sum, leg) => sum + leg.distance, 0),
+    arrivalSublightDistanceAu: arrivalKm / ASTRONOMICAL_UNIT_KM,
+  };
+}
 
 function routeCruiseRatio(route: Route, ship: ShipType): number {
   return Math.max(ship.minimumCruiseRatio ?? 0.7, Math.min(
@@ -318,7 +408,8 @@ export function buildRouteServices(
         ftlSpeedLyPerDay: modeValue(ship.speedByMode, primaryMode, "Speed") * routeCruiseRatio(route, ship),
         thrustRatio: sublightThrustRatio(route, ship),
         targetSublightSpeedKmPerSecond: sublightTargetSpeed(route, ship),
-        sublightDistanceAu: ((departureDistance + arrivalDistance) / 2) / 149_597_870.7,
+        departureSublightDistanceAu: departureDistance / ASTRONOMICAL_UNIT_KM,
+        arrivalSublightDistanceAu: arrivalDistance / ASTRONOMICAL_UNIT_KM,
       };
       const emptyMission = resolveShipMission({ ...missionInput, passengerCount: 0 });
       const fullMission = resolveShipMission({ ...missionInput, passengerCount: seatsPerDeparture });

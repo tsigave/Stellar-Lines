@@ -29,12 +29,11 @@
 
 | 船型 | 座位 | 推进方式 | 主要用途 |
 | --- | ---: | --- | --- |
-| Sparrow Shuttle | 32 | 亚光速 | 高频本地接驳 |
 | Pioneer Regional | 64 | 亚光速、曲速 | 偏远地区和区域直达 |
 | Arrow Express | 48 | 亚光速、曲速 | 高频商务直达 |
 | Meridian Liner | 180 | 亚光速、超空间 | 中型走廊班轮 |
 | Atlas Grand Liner | 360 | 亚光速、超空间 | 低成本高运量干线 |
-| Celestial Yacht | 84 | 全部 | 高价豪华服务 |
+| Celestial Yacht | 84 | 亚光速、曲速 | 高价豪华服务 |
 
 ## 初始公司
 
