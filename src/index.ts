@@ -12,6 +12,7 @@ export * from "./generation/random.js";
 export * from "./generation/system-names.js";
 export * from "./journeys.js";
 export * from "./parameters.js";
+export * from "./propulsion.js";
 export * from "./routes.js";
 export * from "./scheduling.js";
 export * from "./scenarios/proof-of-concept.js";

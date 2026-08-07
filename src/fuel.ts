@@ -11,9 +11,10 @@ export const CABIN_INSTALLATION_MASS_TONNES: CabinConfiguration = {
   premium: 0.35,
 };
 export const PASSENGER_AND_BAGGAGE_MASS_TONNES = 0.1;
-export const EMERGENCY_FUEL_MARGIN = 0.2;
-/** 标准燃料单位折算为质量，仅用于计算携带燃料质量对燃料消耗的反馈。 */
-export const FUEL_UNIT_MASS_TONNES = 0.1;
+/** v0.7 stores an explicit destination reserve instead of a hidden percentage. */
+export const EMERGENCY_FUEL_MARGIN = 0;
+/** Deprecated compatibility name: one stored fuel unit is exactly one tonne in v0.7. */
+export const FUEL_UNIT_MASS_TONNES = 1;
 
 function stableHash(value: string): number {
   let result = 2166136261;
@@ -195,7 +196,7 @@ export function estimateSublightTransit(
   };
 }
 
-/** Unified compatibility entry point. Passenger mass is intentionally ignored in v0.6. */
+/** Compatibility entry point using v0.7 tonne units and actual passenger/baggage mass. */
 export function estimateFuelConsumption(
   ship: ShipType,
   mode: TravelMode,
@@ -203,10 +204,27 @@ export function estimateFuelConsumption(
   cabins: CabinConfiguration,
   passengerCount: number,
 ): FuelConsumptionEstimate {
+  const passengerMassTonnes = Math.max(0, passengerCount) * PASSENGER_AND_BAGGAGE_MASS_TONNES;
   if (mode !== "sublight") {
-    return estimateInterstellarFuel(ship, mode, distance, cabins, 1);
+    const empty = estimateInterstellarFuel(ship, mode, distance, cabins, 1);
+    const massMultiplier = 1 + passengerMassTonnes / Math.max(1, dryOperatingMass(ship, cabins));
+    const fuelUnits = Number((empty.fuelUnits * massMultiplier).toFixed(4));
+    const requiredFuelLoadUnits = Number((empty.requiredFuelLoadUnits * massMultiplier).toFixed(4));
+    return {
+      ...empty,
+      fuelUnits,
+      requiredFuelLoadUnits,
+      fuelCapacityUtilization: Number((requiredFuelLoadUnits / ship.fuelCapacityTonnes).toFixed(4)),
+      grossMassTonnes: Number((empty.grossMassTonnes + passengerMassTonnes + (requiredFuelLoadUnits - empty.requiredFuelLoadUnits)).toFixed(3)),
+      passengerMassTonnes: Number(passengerMassTonnes.toFixed(3)),
+      carriedFuelMassTonnes: requiredFuelLoadUnits,
+    };
   }
-  const transit = estimateSublightTransit(ship, Math.max(1, distance) * 1_000_000, cabins);
+  const transit = estimateSublightTransit(
+    { ...ship, structuralMassTonnes: ship.structuralMassTonnes + passengerMassTonnes },
+    Math.max(1, distance) * 1_000_000,
+    cabins,
+  );
   const installedCabinMassTonnes = cabinInstallationMass(cabins);
   const carriedFuelMassTonnes = transit.requiredFuelLoadUnits * FUEL_UNIT_MASS_TONNES;
   return {
@@ -217,7 +235,7 @@ export function estimateFuelConsumption(
     grossMassTonnes: transit.grossMassTonnes,
     rangeMismatchMultiplier: 1,
     installedCabinMassTonnes,
-    passengerMassTonnes: 0,
+    passengerMassTonnes: Number(passengerMassTonnes.toFixed(3)),
     carriedFuelMassTonnes,
   };
 }

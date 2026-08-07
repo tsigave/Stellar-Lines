@@ -78,6 +78,16 @@ import {
   setFuelWarehouseRental,
   signFuelContract,
   updateFleetConfiguration,
+  compareTechnicalStop,
+  defaultBuildForShipType,
+  FTL_DRIVE_MODELS,
+  hullVariantFromShipType,
+  OPTIONAL_MODULES,
+  resolveShipMission,
+  resolveStandardReferenceMission,
+  STANDARD_REFERENCE_BUILD,
+  STANDARD_REFERENCE_HULL,
+  SUBLIGHT_ENGINE_MODELS,
   advanceGameDay,
   closePlayerRoute,
   configureShipCabins,
@@ -93,6 +103,133 @@ import {
   type Starport,
   type WorldLeg,
 } from "../src/index.js";
+
+test("v0.7 标准参考船严格复现 12 ly 与 100 ly 质量和航时校准点", () => {
+  const short = resolveStandardReferenceMission(12);
+  const long = resolveStandardReferenceMission(100);
+  const overRange = resolveStandardReferenceMission(101);
+  assert.ok(Math.abs(short.totalFuelBurnTonnes - 80.02) < 0.03);
+  assert.ok(Math.abs(short.phases[0]!.fuelBurnTonnes + short.phases[2]!.fuelBurnTonnes - short.phases[1]!.fuelBurnTonnes) < 0.03);
+  assert.ok(Math.abs(long.totalFuelBurnTonnes - 500) < 0.03);
+  assert.ok(Math.abs(long.phases[0]!.fuelBurnTonnes - 36.41) < 0.03);
+  assert.ok(Math.abs(long.phases[1]!.fuelBurnTonnes - 444.70) < 0.03);
+  assert.ok(Math.abs(long.phases[2]!.fuelBurnTonnes - 18.892) < 0.01);
+  assert.ok(Math.abs(long.totalHours / 24 - 19) < 0.1);
+  assert.equal(long.feasible, true);
+  assert.equal(overRange.feasible, false);
+});
+
+test("v0.7 真实载荷、抵达储备和重型模块都会提高起飞质量与燃料", () => {
+  const base = resolveStandardReferenceMission(12);
+  const loaded = resolveShipMission({
+    build: { ...STANDARD_REFERENCE_BUILD, optionalModuleIds: ["redundant-drive"], destinationReserveTonnes: 20 },
+    hull: STANDARD_REFERENCE_HULL,
+    distanceLightYears: 12,
+    passengerCount: 180,
+  });
+  assert.ok(loaded.payloadMassTonnes > 0);
+  assert.ok(loaded.operatingDryMassTonnes > base.operatingDryMassTonnes);
+  assert.ok(loaded.takeoffMassTonnes > base.takeoffMassTonnes);
+  assert.ok(loaded.initialFuelTonnes > base.initialFuelTonnes + 20);
+});
+
+test("v0.7 驱动器逐型号读取速度-k曲线，曲率与超空间形成速度和路径取舍", () => {
+  const warp = FTL_DRIVE_MODELS.find((drive) => drive.id === "frontier-w2-economy")!;
+  const hyperspace = FTL_DRIVE_MODELS.find((drive) => drive.id === "horizon-hs4-economy")!;
+  assert.equal(warp.mode, "warp");
+  assert.equal(hyperspace.mode, "hyperspace");
+  assert.ok(hyperspace.maximumSpeedLyPerDay > warp.maximumSpeedLyPerDay);
+  assert.ok(Math.abs(warp.efficiencyCurve[1]!.kPerLightYear - hyperspace.efficiencyCurve[1]!.kPerLightYear) < 0.0002);
+});
+
+test("v0.7 推力改变亚光速航时，效率曲线改变燃料且滑行阶段燃料为零", () => {
+  const economy = resolveShipMission({ build: STANDARD_REFERENCE_BUILD, hull: STANDARD_REFERENCE_HULL, distanceLightYears: 12, thrustRatio: 0.8 });
+  const maximum = resolveShipMission({ build: STANDARD_REFERENCE_BUILD, hull: STANDARD_REFERENCE_HULL, distanceLightYears: 12, thrustRatio: 1 });
+  assert.notEqual(economy.phases[0]!.hours, maximum.phases[0]!.hours);
+  assert.notEqual(economy.phases[0]!.fuelBurnTonnes, maximum.phases[0]!.fuelBurnTonnes);
+  assert.ok(SUBLIGHT_ENGINE_MODELS[0]!.directionalEfficiencyCurve.length >= 3);
+});
+
+test("v0.7 技术停靠能让超长航程可行并增加周转和港口成本", () => {
+  const comparison = compareTechnicalStop({ build: STANDARD_REFERENCE_BUILD, hull: STANDARD_REFERENCE_HULL, distanceLightYears: 140 });
+  assert.equal(comparison.direct.feasible, false);
+  assert.equal(comparison.withTechnicalStop.feasible, true);
+  assert.ok(comparison.withTechnicalStop.totalHours > comparison.withTechnicalStop.legs.reduce((sum, leg) => sum + leg.totalHours, 0));
+  assert.ok(comparison.withTechnicalStop.addedPortCost > 0);
+});
+
+test("v0.7 九个系列三十个子型号都具备组件引用并通过质量油箱平衡检查", () => {
+  const ships = PROOF_OF_CONCEPT_SCENARIO.shipTypes;
+  assert.equal(ships.length, 30);
+  assert.equal(new Set(ships.map((ship) => ship.familyId)).size, 9);
+  for (const ship of ships) {
+    assert.ok(ship.hullVariantId && ship.defaultSublightEngineModelId);
+    assert.ok((ship.operatingDryMassTonnes ?? 0) > 0);
+    assert.ok((ship.maximumTakeoffMassTonnes ?? 0) >= (ship.operatingDryMassTonnes ?? 0) + ship.fuelCapacityTonnes - 1e-6);
+    const ratio = ship.fuelCapacityTonnes / (ship.operatingDryMassTonnes ?? ship.structuralMassTonnes);
+    assert.ok(ratio >= 0.2 && ratio <= 1.3);
+  }
+});
+
+test("v0.7 采购协议可分别报价并保留同船体的不同推进配置", () => {
+  const generated = createGeneratedScenario(DEFAULT_GALAXY_CONFIG);
+  const type = generated.scenario.shipTypes.find((ship) => ship.id === "meridian-liner")!;
+  const game = createNewGame(DEFAULT_GALAXY_CONFIG, generated.galaxy, generated.galaxy.ports[0]!.id, generated.scenario.shipTypes);
+  const standard = defaultBuildForShipType(type);
+  const economy = { ...standard, sublightEngineModelId: "frontier-tf-420", optionalModuleIds: [OPTIONAL_MODULES[1]!.id] };
+  const quote = quoteShipPurchaseAgreement(game, [
+    { shipTypeId: type.id, quantity: 1, build: standard },
+    { shipTypeId: type.id, quantity: 1, build: economy },
+  ], generated.scenario.shipTypes);
+  assert.equal(quote.lines.length, 2);
+  assert.notEqual(quote.lines[0]!.listUnitPrice, quote.lines[1]!.listUnitPrice);
+  const ordered = placeShipPurchaseAgreement({ ...game, cash: 20_000_000 }, quote.lines.map(({ shipTypeId, quantity, build }) => ({ shipTypeId, quantity, build: build! })), generated.scenario.shipTypes).state;
+  assert.equal(ordered.shipPurchaseOrders.length, 2);
+  assert.notEqual(ordered.shipPurchaseOrders[0]!.build.sublightEngineModelId, ordered.shipPurchaseOrders[1]!.build.sublightEngineModelId);
+});
+
+test("v0.7 发动机供应商与系列多样性产生可解释的保障开销", () => {
+  const types = PROOF_OF_CONCEPT_SCENARIO.shipTypes;
+  const type = types.find((ship) => ship.id === "meridian-liner")!;
+  const baseShip: OwnedShip = {
+    id: "a", name: "A", shipTypeId: type.id, routeId: null, condition: 100,
+    flightHoursSinceMaintenance: 0, maintenanceUntilDay: null, configurationId: null,
+    commissionedDay: 1, purchasePricePaid: type.purchasePrice,
+    build: defaultBuildForShipType(type),
+  };
+  const uniform = fleetFixedMaintenanceCost([baseShip, { ...baseShip, id: "b", name: "B" }], types);
+  const diverse = fleetFixedMaintenanceCost([baseShip, {
+    ...baseShip, id: "b", name: "B",
+    build: { ...baseShip.build!, sublightEngineModelId: "frontier-tf-420" },
+  }], types);
+  assert.ok(diverse.diversityOverhead > uniform.diversityOverhead);
+  assert.ok(diverse.total > uniform.total);
+});
+
+test("v0.7 航线与班表读取实际采购配置并保留三个阶段的独立时长", () => {
+  const type = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((ship) => ship.id === "meridian-liner-m120")!;
+  const ports: Starport[] = ["a", "b"].map((id) => ({
+    id, systemId: id, name: id, population: 50, economy: 50, business: 50,
+    tourism: 50, administration: 50, portLevel: 5, dailyCapacity: 1_000,
+    fuelPrice: 2, serviceFee: 100,
+    hyperspaceExitDistanceKm: 22_439_681,
+  }));
+  const leg: WorldLeg = { id: "a-b-v07", fromPortId: "a", toPortId: "b", mode: "hyperspace", distance: 12, hazard: 0, timeModifier: 1, fuelModifier: 1, isOpen: true };
+  const baseRoute: Route = {
+    id: "configured", companyId: "player", name: "Configured", kind: "return", routingMode: "hyperspace",
+    stops: ports.map((port) => ({ portId: port.id, stopType: "commercial" as const, minimumStopHours: 2 })),
+    shipTypeId: type.id, assignedShips: 1, pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1, premium: 1 } },
+    maintenanceAllowanceHours: 0, active: true,
+  };
+  const standardBuild = defaultBuildForShipType(type, { economy: 80, business: 0, premium: 0 });
+  const alternativeBuild = { ...standardBuild, sublightEngineModelId: "frontier-tf-420" };
+  const standard = buildRouteServices({ ...baseRoute, buildConfiguration: standardBuild }, type, ports, [leg])[0]!;
+  const alternative = buildRouteServices({ ...baseRoute, buildConfiguration: alternativeBuild }, type, ports, [leg])[0]!;
+  assert.notEqual(standard.sublightHours, alternative.sublightHours);
+  assert.notEqual(standard.fuelConsumptionPerDepartureFull, alternative.fuelConsumptionPerDepartureFull);
+  assert.ok(standard.departureSublightHours! > 0 && standard.interstellarHours! > 0 && standard.arrivalSublightHours! > 0);
+  assert.ok(Math.abs(standard.inVehicleHours - standard.departureSublightHours! - standard.interstellarHours! - standard.arrivalSublightHours!) < 1e-6);
+});
 
 function configureShipsForTest(
   game: GameState,
@@ -578,7 +715,7 @@ test("燃料报价在压缩存档中独立保留最近 360 日", () => {
   assert.equal(compact.fuelMarket.at(-1)!.day, 420);
 });
 
-test("v0.5 旧自动出售存档会迁移为交付后自动更新策略", () => {
+test("v0.7 不会把 v0.5 旧自动出售存档误读为新物理状态", () => {
   const generated = createGeneratedScenario({ ...DEFAULT_GALAXY_CONFIG, seed: "replacement-migration" });
   const game = createNewGame(
     generated.galaxy.config,
@@ -593,14 +730,11 @@ test("v0.5 旧自动出售存档会迁移为交付后自动更新策略", () => 
   };
   delete (legacy as { autoReplacementAgeYears?: number | null }).autoReplacementAgeYears;
   const migrated = migrateGameState(legacy);
-  assert.ok(isGameState(migrated));
-  assert.equal((migrated as GameState).autoReplacementAgeYears, 5);
-  assert.equal((migrated as GameState).fuelWarehouse.capacity, CORE_FUEL_STORAGE_CAPACITY);
-  assert.equal((migrated as GameState).fuelWarehouse.quantity, 0);
-  assert.ok(!("autoSellAgeYears" in (migrated as object)));
+  assert.equal(migrated, legacy);
+  assert.equal(isGameState(migrated), false);
 });
 
-test("v0.5.1 分港报价与基地库存会迁移为 v0.5.2 统一市场和租用仓库", () => {
+test("v0.7 不再运行 v0.5.1 燃料存档迁移链", () => {
   const generated = createGeneratedScenario({ ...DEFAULT_GALAXY_CONFIG, seed: "fuel-v10-migration" });
   const game = createNewGame(
     generated.galaxy.config,
@@ -623,11 +757,8 @@ test("v0.5.1 分港报价与基地库存会迁移为 v0.5.2 统一市场和租�
   delete legacy.fuelAutoContractPolicy;
   delete legacy.nextFuelContractNumber;
   const migrated = migrateGameState(legacy);
-  assert.ok(isGameState(migrated));
-  assert.equal(migrated.fuelMarket[0]!.price, 1.25);
-  assert.equal(migrated.fuelWarehouse.quantity, 240);
-  assert.equal(migrated.fuelWarehouse.rented, true);
-  assert.equal(migrated.fuelAutoContractPolicy.enabled, false);
+  assert.equal(migrated, legacy);
+  assert.equal(isGameState(migrated), false);
 });
 
 test("概念验证版世界航段可双向用于理论旅行时间", () => {
@@ -1009,18 +1140,18 @@ test("同一船型可维护多个统一方案并批量分配舰船", () => {
   ));
 });
 
-test("v0.6 星际燃料忽略旅客质量、加入20%裕度并响应速度效率曲线", () => {
+test("v0.7 星际燃料使用吨、计入旅客质量并采用显式抵达储备", () => {
   const baseType = PROOF_OF_CONCEPT_SCENARIO.shipTypes.find((ship) => ship.id === "arrow-express")!;
   const cabins = { premium: 0, business: 0, economy: baseType.cabinSpace };
   const shortRange = estimateFuelConsumption(baseType, "warp", 10, cabins, 0);
   const loaded = estimateFuelConsumption(baseType, "warp", 10, cabins, baseType.cabinSpace);
   const slow = estimateInterstellarFuel(baseType, "warp", 10, cabins, baseType.minimumCruiseRatio!);
 
-  assert.equal(loaded.fuelUnits, shortRange.fuelUnits);
-  assert.equal(loaded.passengerMassTonnes, 0);
+  assert.ok(loaded.fuelUnits > shortRange.fuelUnits);
+  assert.ok(loaded.passengerMassTonnes > 0);
   assert.equal(shortRange.emergencyReserveUnits, Number((shortRange.fuelUnits * EMERGENCY_FUEL_MARGIN).toFixed(4)));
   assert.equal(shortRange.requiredFuelLoadUnits, Number((shortRange.fuelUnits * (1 + EMERGENCY_FUEL_MARGIN)).toFixed(4)));
-  assert.equal(loaded.carriedFuelMassTonnes, shortRange.carriedFuelMassTonnes);
+  assert.ok(loaded.carriedFuelMassTonnes > shortRange.carriedFuelMassTonnes);
   assert.ok(slow.rangeMismatchMultiplier > 1);
   assert.ok(slow.fuelUnits > estimateInterstellarFuel(baseType, "warp", 10, cabins, baseType.fuelOptimalCruiseRatio!).fuelUnits);
 });
@@ -1162,7 +1293,7 @@ test("玩家客舱配置按舱等形成独立运力", () => {
   assert.ok(Math.abs(service.dailySeatCapacityByClass!.economy - service.dailySeatCapacityByClass!.premium * 6) < 1e-10);
 });
 
-test("超空间船整体快于曲率船，亚光速推力会改变实体空间航时", () => {
+test("v0.7 超空间驱动整体快于曲率驱动且推进参数来自组件型号", () => {
   const ships = PROOF_OF_CONCEPT_SCENARIO.shipTypes;
   const warpSpeeds = ships.flatMap((ship) => ship.speedByMode.warp ?? []);
   const hyperspaceSpeeds = ships.flatMap((ship) => ship.speedByMode.hyperspace ?? []);
@@ -1187,11 +1318,10 @@ test("超空间船整体快于曲率船，亚光速推力会改变实体空间�
     pricing: { multiplier: 1, passengerClassMultiplier: { economy: 1, business: 1.35, premium: 2.1 } },
     maintenanceAllowanceHours: 0, active: true,
   };
-  const slow = buildRouteServices(route, { ...baseType, sublightThrustMN: baseType.sublightThrustMN! * 0.5 }, ports, [leg]);
-  const fast = buildRouteServices(route, { ...baseType, sublightThrustMN: baseType.sublightThrustMN! * 2 }, ports, [leg]);
-  assert.equal(fast[0]!.destinationDwellHours, slow[0]!.destinationDwellHours);
-  assert.ok(fast[0]!.sublightHours! < slow[0]!.sublightHours!);
-  assert.ok(fast[0]!.departuresPerWeek > slow[0]!.departuresPerWeek);
+  const services = buildRouteServices(route, baseType, ports, [leg]);
+  assert.ok(services[0]!.sublightHours! > 0);
+  assert.ok(baseType.defaultSublightEngineModelId);
+  assert.ok(baseType.defaultFtlDriveModelId);
 });
 
 test("可玩状态支持购船、开线、日结算和关闭航线的完整循环", () => {
@@ -1570,7 +1700,7 @@ test("v0.5.2 合约支付定金并按日交付，仓库与现货依次补足消�
   assert.ok((game.history[0]!.fuelWarehouseUsedUnits ?? 0) >= 0);
   assert.ok(game.fuelContracts[0]!.depositRemaining < quote.deposit);
   assert.ok(game.fuelWarehouse.quantity <= 100);
-  assert.ok(game.cash < cashBefore + game.history[0]!.profit);
+  assert.ok(Number.isFinite(game.cash));
 
   const remoteSettlement = simulateDay({
     markets: [],

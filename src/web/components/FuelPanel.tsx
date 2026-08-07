@@ -6,7 +6,6 @@ import {
   FUEL_CONTRACT_MINIMUM_WEEKLY_UNITS,
   FUEL_OPERATING_COST_SCALE,
   FUEL_RESALE_PRICE_RATE,
-  FUEL_UNIT_MASS_TONNES,
   FUEL_WAREHOUSE_RENT_PER_TONNE_DAY,
   forecastWeeklyFuelDemand,
   quoteFuelContract,
@@ -117,20 +116,20 @@ export function FuelPanel({
   const warehouseFill = game.fuelWarehouse.capacity > 0
     ? game.fuelWarehouse.quantity / game.fuelWarehouse.capacity
     : 0;
-  const estimatedDailyRent = game.fuelWarehouse.quantity * FUEL_UNIT_MASS_TONNES * FUEL_WAREHOUSE_RENT_PER_TONNE_DAY;
+  const estimatedDailyRent = game.fuelWarehouse.quantity * FUEL_WAREHOUSE_RENT_PER_TONNE_DAY;
 
   return (
     <main className="fuel-workspace">
       <section className="fuel-hero glass-panel">
         <div>
-          <span className="eyebrow">UNIFIED FUEL MARKET · V0.5.2</span>
+          <span className="eyebrow">D–He³ FUSION FUEL MARKET · V0.7</span>
           <h2>燃料风险管理</h2>
           <p>统一市场报价；通过供货合约锁定成本，或租用仓库保留低价现货。</p>
         </div>
-        <div className="fuel-hero-price"><span>当前市场价</span><strong>{price.toFixed(3)} Cr</strong><small>交付成本 {(price * FUEL_OPERATING_COST_SCALE).toFixed(2)} Cr / FU</small></div>
-        <div className="fuel-kpi"><span>预计每周消耗</span><strong>{formatNumber(weeklyForecast)} FU</strong><small>最近经营与当前需求基准</small></div>
+        <div className="fuel-hero-price"><span>当前市场价</span><strong>{price.toFixed(3)} Cr/t</strong><small>结算成本 {(price * FUEL_OPERATING_COST_SCALE).toFixed(2)} Cr/t</small></div>
+        <div className="fuel-kpi"><span>预计每周消耗</span><strong>{formatNumber(weeklyForecast)} t</strong><small>最近经营与当前需求基准</small></div>
         <div className="fuel-kpi"><span>合约覆盖</span><strong>{(coverage * 100).toFixed(0)}%</strong><small>保留现货 {(Math.max(0, 1 - coverage) * 100).toFixed(0)}%</small></div>
-        <div className="fuel-kpi"><span>仓库库存</span><strong>{game.fuelWarehouse.quantity.toFixed(1)} FU</strong><small>{game.fuelWarehouse.rented ? `预计日租 ${formatCredits(estimatedDailyRent)}` : "尚未租用"}</small></div>
+        <div className="fuel-kpi"><span>仓库库存</span><strong>{game.fuelWarehouse.quantity.toFixed(1)} t</strong><small>{game.fuelWarehouse.rented ? `预计日租 ${formatCredits(estimatedDailyRent)}` : "尚未租用"}</small></div>
       </section>
 
       <section className="fuel-dashboard-grid">
@@ -154,7 +153,7 @@ export function FuelPanel({
             </div>
           </div>
           <div className="fuel-price-chart" role="img" aria-label={`最近 ${priceRecords.length} 日统一燃料价格，横轴为游戏日期，纵轴为每标准燃料单位价格`}>
-            <strong className="fuel-price-y-title">价格（Cr/FU）</strong>
+            <strong className="fuel-price-y-title">价格（Cr/t）</strong>
             <div className="fuel-price-y-axis">
               {priceTicks.map((tick, index) => <span key={index} style={{ top: `${index * 25}%` }}>{tick.toFixed(2)}</span>)}
             </div>
@@ -177,7 +176,7 @@ export function FuelPanel({
                 <i className="fuel-price-hover-dot" style={{ left: `${hoveredPriceLeft}%`, top: `${hoveredPriceTop}%` }} />
                 <div className={`fuel-price-tooltip${hoveredPriceLeft < 15 ? " left" : hoveredPriceLeft > 85 ? " right" : ""}${hoveredPriceTop < 22 ? " below" : ""}`} style={{ left: `${hoveredPriceLeft}%`, top: `${hoveredPriceTop}%` }}>
                   <span>{formatGameDate(hoveredPriceRecord.day)}</span>
-                  <strong>{hoveredPriceRecord.price.toFixed(3)} Cr / FU</strong>
+                  <strong>{hoveredPriceRecord.price.toFixed(3)} Cr/t</strong>
                 </div>
               </>}
             </div>
@@ -200,7 +199,7 @@ export function FuelPanel({
               const contract = Math.min(total, record.fuelContractUsedUnits ?? 0);
               const warehouse = Math.min(Math.max(0, total - contract), record.fuelWarehouseUsedUnits ?? 0);
               const spot = Math.max(0, total - contract - warehouse);
-              return <div className="fuel-day-column" key={record.day} title={`第 ${record.day} 日：${total.toFixed(1)} FU`}>
+              return <div className="fuel-day-column" key={record.day} title={`第 ${record.day} 日：${total.toFixed(1)} t`}>
                 <div style={{ height: `${Math.max(2, total / maximumConsumption * 100)}%` }}>
                   <i className="contract" style={{ height: `${total > 0 ? contract / total * 100 : 0}%` }} />
                   <i className="warehouse" style={{ height: `${total > 0 ? warehouse / total * 100 : 0}%` }} />
@@ -231,7 +230,7 @@ export function FuelPanel({
           <div><span>签约定金</span><strong>{quote ? formatCredits(quote.deposit) : "—"}</strong></div>
           <button disabled={!quote || game.cash < (quote?.deposit ?? 0)} onClick={() => quote && onSignContract(termWeeks, weeklyUnits)}>支付定金并签约</button>
         </div>
-        <small className="fuel-rule-note">最低 {FUEL_CONTRACT_MINIMUM_WEEKLY_UNITS} FU/周、每 10 FU 调整；提前取消将没收未摊销定金，并收取剩余合同额 25% 与供应商价格损失中的较高者。</small>
+        <small className="fuel-rule-note">最低 {FUEL_CONTRACT_MINIMUM_WEEKLY_UNITS} t/周、每 10 t 调整；提前取消将没收未摊销定金，并收取剩余合同额 25% 与供应商价格损失中的较高者。</small>
 
         <div className="fuel-contract-list">
           {activeContracts.length === 0 ? <div className="empty-state larger">当前没有执行中的燃料合约。</div> : activeContracts.map((contract) => {
@@ -241,7 +240,7 @@ export function FuelPanel({
             const additionalFee = Math.max(remainingValue * FUEL_CONTRACT_CANCELLATION_RATE, supplierLoss);
             return <article key={contract.id}>
               <div><strong>{contract.id}</strong><span>{contract.createdAutomatically ? "自动签约" : "手动签约"} · {contractStatus(game, contract)}</span></div>
-              <div><span>供应</span><strong>{contract.weeklyUnits.toFixed(0)} FU/周</strong></div>
+              <div><span>供应</span><strong>{contract.weeklyUnits.toFixed(0)} t/周</strong></div>
               <div><span>固定价</span><strong>{contract.contractMarketPrice.toFixed(3)} Cr</strong></div>
               <div><span>剩余期限</span><strong>{Math.max(0, contract.endsOnDay - game.day + 1)} 天</strong></div>
               <div><span>解约总损失</span><strong>{formatCredits(contract.depositRemaining + additionalFee)}</strong></div>
@@ -249,7 +248,7 @@ export function FuelPanel({
             </article>;
           })}
         </div>
-        {historicalContracts.length > 0 && <details className="fuel-contract-history"><summary>查看最近历史合约（{historicalContracts.length}）</summary>{historicalContracts.map((contract) => <p key={contract.id}><strong>{contract.id}</strong><span>{contractStatus(game, contract)} · {contract.weeklyUnits.toFixed(0)} FU/周 · {contract.contractMarketPrice.toFixed(3)} Cr</span></p>)}</details>}
+        {historicalContracts.length > 0 && <details className="fuel-contract-history"><summary>查看最近历史合约（{historicalContracts.length}）</summary>{historicalContracts.map((contract) => <p key={contract.id}><strong>{contract.id}</strong><span>{contractStatus(game, contract)} · {contract.weeklyUnits.toFixed(0)} t/周 · {contract.contractMarketPrice.toFixed(3)} Cr/t</span></p>)}</details>}
       </section>
 
       <section className="fuel-dashboard-grid strategy">
@@ -262,13 +261,13 @@ export function FuelPanel({
             <label>保留现货比例<input type="number" min="0" max="100" step="5" value={spotExposure} onChange={(event) => setSpotExposure(Number(event.target.value))} /></label>
             <button onClick={() => onAutoPolicyChange({ enabled: autoEnabled, triggerPrice: autoTrigger, termWeeks: autoTerm, spotExposureShare: spotExposure / 100 })}>保存自动策略</button>
           </div>
-          <p className="fuel-explanation">当报价不高于 {autoTrigger.toFixed(2)} Cr 时，系统最多把未来预测消耗的 {Math.max(0, 100 - spotExposure).toFixed(0)}% 纳入合同；新增缺口不足 100 FU/周时继续使用现货。</p>
+          <p className="fuel-explanation">当报价不高于 {autoTrigger.toFixed(2)} Cr/t 时，系统最多把未来预测消耗的 {Math.max(0, 100 - spotExposure).toFixed(0)}% 纳入合同；新增缺口不足 100 t/周时继续使用现货。</p>
         </article>
 
         <article className="fuel-section-card glass-panel">
           <div className="fleet-section-heading"><div><span className="eyebrow">WAREHOUSE</span><h2>租用燃料仓库</h2></div><p>按日末实际库存吨数计租，不对空置容量收费。</p></div>
-          {!game.fuelWarehouse.rented ? <div className="fuel-rental-callout"><p>固定容量 {formatNumber(game.fuelWarehouse.capacity)} FU；租金 {FUEL_WAREHOUSE_RENT_PER_TONNE_DAY.toFixed(2)} Cr/吨/天。</p><button onClick={() => onWarehouseRentalChange(true)}>租用仓库</button></div> : <>
-            <div className="fuel-storage-overview"><div><span>库存</span><strong>{game.fuelWarehouse.quantity.toFixed(1)} / {game.fuelWarehouse.capacity.toFixed(0)} FU</strong></div><div className="fuel-storage-meter"><i style={{ width: `${Math.min(100, warehouseFill * 100)}%` }} /></div><small>加权平均成本 {game.fuelWarehouse.quantity > 0 ? `${(game.fuelWarehouse.averageUnitCost / FUEL_OPERATING_COST_SCALE).toFixed(3)} Cr` : "—"}</small></div>
+          {!game.fuelWarehouse.rented ? <div className="fuel-rental-callout"><p>固定容量 {formatNumber(game.fuelWarehouse.capacity)} t；租金 {FUEL_WAREHOUSE_RENT_PER_TONNE_DAY.toFixed(2)} Cr/t/天。</p><button onClick={() => onWarehouseRentalChange(true)}>租用仓库</button></div> : <>
+            <div className="fuel-storage-overview"><div><span>库存</span><strong>{game.fuelWarehouse.quantity.toFixed(1)} / {game.fuelWarehouse.capacity.toFixed(0)} t</strong></div><div className="fuel-storage-meter"><i style={{ width: `${Math.min(100, warehouseFill * 100)}%` }} /></div><small>加权平均成本 {game.fuelWarehouse.quantity > 0 ? `${(game.fuelWarehouse.averageUnitCost / FUEL_OPERATING_COST_SCALE).toFixed(3)} Cr/t` : "—"}</small></div>
             <div className="fuel-warehouse-trade"><label>交易数量<input type="number" min="1" step="10" value={tradeUnits} onChange={(event) => setTradeUnits(Number(event.target.value))} /></label><button onClick={() => onBuyWarehouseFuel(tradeUnits)}>按市价买入</button><button onClick={() => onSellWarehouseFuel(tradeUnits)}>按八折出售</button></div>
             <div className="fuel-policy-form warehouse">
               <label className="toggle-line"><input type="checkbox" checked={withdrawalUnlimited} onChange={(event) => setWithdrawalUnlimited(event.target.checked)} />每日提取不限量</label>
@@ -283,7 +282,7 @@ export function FuelPanel({
 
       {latest && <section className="fuel-section-card glass-panel fuel-last-settlement">
         <div className="fleet-section-heading"><div><span className="eyebrow">LAST SETTLEMENT</span><h2>昨日燃料结算</h2></div><p>第 {latest.day} 日</p></div>
-        <div><span>实际消耗<strong>{(latest.fuelConsumedUnits ?? 0).toFixed(1)} FU</strong></span><span>合约供应<strong>{(latest.fuelContractDeliveredUnits ?? 0).toFixed(1)} FU</strong></span><span>仓库提取<strong>{(latest.fuelWarehouseUsedUnits ?? 0).toFixed(1)} FU</strong></span><span>现货采购<strong>{(latest.fuelSpotPurchasedUnits ?? 0).toFixed(1)} FU</strong></span><span>盈余出售<strong>{(latest.fuelSurplusSoldUnits ?? 0).toFixed(1)} FU</strong></span><span>仓储费<strong>{formatCredits(latest.fuelWarehouseRent ?? 0)}</strong></span></div>
+        <div><span>实际消耗<strong>{(latest.fuelConsumedUnits ?? 0).toFixed(1)} t</strong></span><span>合约供应<strong>{(latest.fuelContractDeliveredUnits ?? 0).toFixed(1)} t</strong></span><span>仓库提取<strong>{(latest.fuelWarehouseUsedUnits ?? 0).toFixed(1)} t</strong></span><span>现货采购<strong>{(latest.fuelSpotPurchasedUnits ?? 0).toFixed(1)} t</strong></span><span>盈余出售<strong>{(latest.fuelSurplusSoldUnits ?? 0).toFixed(1)} t</strong></span><span>仓储费<strong>{formatCredits(latest.fuelWarehouseRent ?? 0)}</strong></span></div>
       </section>}
     </main>
   );

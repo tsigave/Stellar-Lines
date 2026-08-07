@@ -56,7 +56,8 @@ import { TimeControls, type GameSpeed } from "./components/TimeControls.js";
 import { TopMetrics } from "./components/TopMetrics.js";
 import { loadStoredGame, persistGame } from "./storage.js";
 
-const SAVE_KEY = "stellar-lines-v0-save";
+const SAVE_KEY = "stellar-lines-v0.7-save";
+const LEGACY_SAVE_KEYS = ["stellar-lines-v0-save", "stellar-lines-v0.6-save", "stellar-lines-v0.6.1-save"] as const;
 const UI_THEME_KEY = "stellar-lines-ui-theme";
 const INSPECTOR_WIDTH_KEY = "stellar-lines-inspector-width";
 type UiTheme = "deep-space" | "aurora" | "command-deck";
@@ -85,6 +86,7 @@ interface GameSession {
   generated: ReturnType<typeof createGeneratedScenario>;
   game: GameState;
   restored: boolean;
+  legacySaveDetected: boolean;
 }
 
 function createSession(
@@ -99,6 +101,7 @@ function createSession(
     generated,
     game: createNewGame(config, generated.galaxy, base, generated.scenario.shipTypes, generated.scenario.routes.filter((route) => route.companyId !== "player")),
     restored,
+    legacySaveDetected: false,
   };
 }
 
@@ -106,8 +109,10 @@ function initialSession(): GameSession {
   try {
     const storedGame = migrateGameState(loadStoredGame(window.localStorage, SAVE_KEY));
     if (isGameState(storedGame)) {
-      return { generated: createGeneratedScenario(storedGame.config), game: storedGame, restored: true };
+      return { generated: createGeneratedScenario(storedGame.config), game: storedGame, restored: true, legacySaveDetected: false };
     }
+    const legacySaveDetected = LEGACY_SAVE_KEYS.some((key) => window.localStorage.getItem(key) !== null);
+    if (legacySaveDetected) return { ...createSession(DEFAULT_GALAXY_CONFIG, undefined, false), legacySaveDetected: true };
   } catch {
     // A corrupt or unavailable local save should never prevent a new game.
   }
@@ -123,7 +128,9 @@ export function App() {
   const [notice, setNotice] = useState(() =>
     session.restored
       ? `自动存档已载入：继续第 ${session.game.day} 日的经营。`
-      : "请先生成星域并选择一个基地星球。",
+      : session.legacySaveDetected
+        ? "检测到 v0.6.1 或更早存档。v0.7 采用不兼容的新物理规则，旧存档已保留但不会读取；请创建新游戏。"
+        : "请先生成星域并选择一个基地星球。",
   );
   const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
@@ -219,6 +226,7 @@ export function App() {
         generated: newGamePreview,
         game: createNewGame(config, newGamePreview.galaxy, draftBasePortId, newGamePreview.scenario.shipTypes, newGamePreview.scenario.routes.filter((route) => route.companyId !== "player")),
         restored: true,
+        legacySaveDetected: false,
       };
       setSession(next);
       setSelectedPortId(next.game.basePortId);
@@ -267,7 +275,7 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-mark">FS</div>
-        <div className="brand-copy"><strong>远星航运局</strong><span>PLAYABLE PROTOTYPE V0.6</span></div>
+        <div className="brand-copy"><strong>远星航运局</strong><span>PROPULSION ECONOMY V0.7</span></div>
         <div className="header-sector"><span>当前星域</span><strong>{generated.scenario.name}</strong></div>
         <button className="new-game-button" onClick={openNewGame}>新游戏</button>
         <button className="settings-button" onClick={() => setShowSettings(true)}>界面设置</button>
@@ -338,8 +346,8 @@ export function App() {
           game={game}
           shipTypes={generated.scenario.shipTypes}
           onPlacePurchaseAgreement={(lines) => commit(() => placeShipPurchaseAgreement(game, lines, generated.scenario.shipTypes))}
-          onCreateConfiguration={(shipTypeId, name, cabins) => commit(() => createFleetConfiguration(game, shipTypeId, name, cabins, generated.scenario.shipTypes))}
-          onUpdateConfiguration={(configurationId, name, cabins) => commit(() => updateFleetConfiguration(game, configurationId, name, cabins, generated.scenario.shipTypes))}
+          onCreateConfiguration={(shipTypeId, name, cabins, build) => commit(() => createFleetConfiguration(game, shipTypeId, name, cabins, generated.scenario.shipTypes, build))}
+          onUpdateConfiguration={(configurationId, name, cabins, build) => commit(() => updateFleetConfiguration(game, configurationId, name, cabins, generated.scenario.shipTypes, build))}
           onAssignShips={(configurationId, shipIds) => commit(() => assignShipsToFleetConfiguration(game, configurationId, shipIds))}
           onMaintainShip={(shipId) => commit(() => performShipMaintenance(game, shipId, generated.scenario.shipTypes))}
           onReplaceShip={(shipId) => commit(() => orderShipReplacement(game, shipId, generated.scenario.shipTypes))}

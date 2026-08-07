@@ -4,6 +4,154 @@ export type PassengerType = "business" | "leisure" | "budget" | "luxury";
 export type TravelMode = "sublight" | "warp" | "hyperspace";
 export type CabinConfiguration = Record<PassengerClass, number>;
 
+export type ShipInstallationClass = 1 | 2 | 3 | 4 | 5;
+
+export interface ShipHullFamily {
+  id: string;
+  manufacturer: string;
+  name: string;
+  maintenanceFamily: string;
+}
+
+export interface ShipHullVariant {
+  id: string;
+  familyId: string;
+  name: string;
+  installationClass: ShipInstallationClass;
+  structureMassTonnes: number;
+  fuelCapacityTonnes: number;
+  maximumTakeoffMassTonnes: number;
+  sublightEngineSlots: number;
+  ftlDriveSlots: number;
+  optionalModuleSlots: number;
+  cabinSpace: number;
+  basePrice: number;
+  deliveryDays: number;
+  fixedMaintenanceCostPerDay: number;
+  minimumPortLevel: 1 | 2 | 3 | 4 | 5;
+}
+
+export interface EfficiencyCurvePoint {
+  ratio: number;
+  efficiency: number;
+}
+
+export interface SublightEngineModel {
+  id: string;
+  manufacturer: string;
+  family: string;
+  model: string;
+  installationClass: ShipInstallationClass;
+  massTonnes: number;
+  price: number;
+  fixedMaintenanceCostPerDay: number;
+  maintenancePerFlightHour: number;
+  maximumThrustMN: number;
+  maximumContinuousThrustMN: number;
+  optimalThrustRatio: number;
+  economyThrustRatio: number;
+  directionalEfficiencyCurve: readonly EfficiencyCurvePoint[];
+  reliability: number;
+  highThrustWear: number;
+}
+
+export interface FtlEfficiencyCurvePoint {
+  speedLyPerDay: number;
+  kPerLightYear: number;
+}
+
+export interface FtlDriveModel {
+  id: string;
+  mode: "warp" | "hyperspace";
+  manufacturer: string;
+  family: string;
+  model: string;
+  installationClass: ShipInstallationClass;
+  massTonnes: number;
+  price: number;
+  fixedMaintenanceCostPerDay: number;
+  maintenancePerFlightHour: number;
+  minimumSpeedLyPerDay: number;
+  optimalSpeedLyPerDay: number;
+  maximumSpeedLyPerDay: number;
+  efficiencyCurve: readonly FtlEfficiencyCurvePoint[];
+  reliability: number;
+  highSpeedWear: number;
+  minimumPortLevel: 1 | 2 | 3 | 4 | 5;
+}
+
+export type OptionalModuleEffect =
+  | "navigation-ai"
+  | "predictive-maintenance"
+  | "automated-ground-interface"
+  | "high-capacity-radiator"
+  | "extended-fuel-tank"
+  | "redundant-drive"
+  | "quick-change-engine-bay"
+  | "premium-cabin-environment";
+
+export interface OptionalModule {
+  id: string;
+  name: string;
+  effect: OptionalModuleEffect;
+  installationClass: ShipInstallationClass;
+  massTonnes: number;
+  price: number;
+  fixedMaintenanceCostPerDay: number;
+  fuelCapacityBonusTonnes?: number;
+  cabinSpaceDelta?: number;
+  crewMultiplier?: number;
+  turnaroundMultiplier?: number;
+  reliabilityBonus?: number;
+  comfortBonus?: number;
+  highSpeedWearMultiplier?: number;
+}
+
+/** A reusable, purchasable v0.7 build. Fuel is loaded per mission and is not part of the build. */
+export interface ShipBuildConfiguration {
+  hullVariantId: string;
+  sublightEngineModelId: string;
+  ftlDriveModelId?: string;
+  optionalModuleIds: readonly string[];
+  cabins: CabinConfiguration;
+  destinationReserveTonnes: number;
+}
+
+export interface MissionPhasePerformance {
+  kind: "departure" | "interstellar" | "arrival" | "turnaround";
+  distance: number;
+  hours: number;
+  fuelBurnTonnes: number;
+  startMassTonnes: number;
+  endMassTonnes: number;
+}
+
+export interface ResolvedShipPerformance {
+  build: ShipBuildConfiguration;
+  operatingDryMassTonnes: number;
+  payloadMassTonnes: number;
+  initialFuelTonnes: number;
+  arrivalReserveTonnes: number;
+  takeoffMassTonnes: number;
+  fuelCapacityTonnes: number;
+  maximumTakeoffMassTonnes: number;
+  fuelCapacityUtilization: number;
+  totalFuelBurnTonnes: number;
+  totalHours: number;
+  maximumDirectRangeLightYears: number;
+  accelerationMetersPerSecondSquared: number;
+  purchasePrice: number;
+  fixedMaintenanceCostPerDay: number;
+  maintenancePerFlightHour: number;
+  crewRequired: number;
+  turnaroundHours: number;
+  reliability: number;
+  comfort: number;
+  phases: readonly MissionPhasePerformance[];
+  feasible: boolean;
+  infeasibleReasons: readonly string[];
+}
+
 export const PASSENGER_CLASSES: readonly PassengerClass[] = [
   "economy",
   "business",
@@ -215,6 +363,13 @@ export interface ShipType {
   fastFuelPenaltyCoefficient?: number;
   highSpeedMaintenancePenalty?: number;
   highSpeedReliabilityPenalty?: number;
+  /** v0.7 component references. Legacy aggregate fields above remain read-only projections. */
+  hullVariantId?: string;
+  defaultSublightEngineModelId?: string;
+  defaultFtlDriveModelId?: string;
+  defaultOptionalModuleIds?: readonly string[];
+  operatingDryMassTonnes?: number;
+  maximumTakeoffMassTonnes?: number;
 }
 
 export interface RouteStop {
@@ -273,6 +428,8 @@ export interface Route {
   slotApplicationDay?: number;
   /** 由实际班表回填的有效周班次，仅用于结算模型。 */
   operationalDeparturesPerWeek?: number;
+  /** v0.7 resolved purchase build used by this homogeneous route projection. */
+  buildConfiguration?: ShipBuildConfiguration;
 }
 
 export interface ServiceLeg {
@@ -308,6 +465,9 @@ export interface ServiceLeg {
   scheduledDepartureMinutes?: readonly number[];
   scheduleQuality?: number;
   sublightHours?: number;
+  departureSublightHours?: number;
+  interstellarHours?: number;
+  arrivalSublightHours?: number;
   sublightFuelUnits?: number;
   interstellarFuelUnits?: number;
 }

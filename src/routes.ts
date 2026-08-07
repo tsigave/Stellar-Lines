@@ -6,11 +6,14 @@ import {
   PASSENGER_TYPE_SATISFACTION_WEIGHTS,
 } from "./parameters.js";
 import {
-  FUEL_UNIT_MASS_TONNES,
   deterministicExitDistanceKm,
-  estimateInterstellarFuel,
   estimateSublightTransit,
 } from "./fuel.js";
+import {
+  defaultBuildForShipType,
+  hullVariantFromShipType,
+  resolveShipMission,
+} from "./propulsion.js";
 import {
   PASSENGER_CLASSES,
   PASSENGER_TYPES,
@@ -266,6 +269,9 @@ export function buildRouteServices(
     portCost: number;
     operatingCost: number;
     sublightHours: number;
+    departureSublightHours: number;
+    interstellarHours: number;
+    arrivalSublightHours: number;
     sublightFuelUnits: number;
     interstellarFuelUnits: number;
   }> = [];
@@ -277,26 +283,20 @@ export function buildRouteServices(
     if (!legs) {
       throw new Error(`${ship.name} cannot find an open path from ${from.portId} to ${to.portId}`);
     }
-    const interstellarHours = legs.reduce((sum, leg) => {
-      if (leg.mode === "sublight") return sum;
-      const speed = modeValue(ship.speedByMode, leg.mode, "Speed") * routeCruiseRatio(route, ship);
-      return sum + Math.max(
-        1,
-        leg.distance / Math.min(speed, MAX_INTERSTELLAR_SPEED_LY_PER_DAY),
-      ) * 24 * leg.timeModifier;
-    }, 0);
     const fromPort = portsById.get(from.portId)!;
     const toPort = portsById.get(to.portId)!;
-    const interstellarEstimates = legs.filter((leg) => leg.mode !== "sublight").map((leg) => ({
-      leg,
-      estimate: estimateInterstellarFuel(ship, leg.mode as "warp" | "hyperspace", leg.distance, installedCabins, routeCruiseRatio(route, ship)),
-    }));
-    const interstellarFuelUnits = interstellarEstimates.reduce((sum, item) => sum + item.estimate.fuelUnits * item.leg.fuelModifier, 0);
-    const interstellarFuelLoadUnits = interstellarEstimates.reduce((sum, item) => sum + item.estimate.requiredFuelLoadUnits * item.leg.fuelModifier, 0);
-    const primaryMode = interstellarEstimates[0]?.leg.mode as "warp" | "hyperspace" | undefined;
+    const interstellarLegs = legs.filter((leg) => leg.mode !== "sublight");
+    const primaryMode = interstellarLegs[0]?.mode as "warp" | "hyperspace" | undefined;
+    let interstellarHours = 0;
+    let interstellarFuelUnits = 0;
     let sublightHours = 0;
+    let departureSublightHours = 0;
+    let arrivalSublightHours = 0;
     let sublightFuelUnits = 0;
-    let sublightFuelLoadUnits = 0;
+    let fuelConsumptionEmpty = 0;
+    let fuelConsumptionFull = 0;
+    let fuelLoadEmpty = 0;
+    let fuelLoadFull = 0;
     if (primaryMode) {
       const departureDistance = primaryMode === "hyperspace"
         ? fromPort.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(fromPort.systemId, primaryMode)
@@ -304,29 +304,52 @@ export function buildRouteServices(
       const arrivalDistance = primaryMode === "hyperspace"
         ? toPort.hyperspaceExitDistanceKm ?? deterministicExitDistanceKm(toPort.systemId, primaryMode)
         : toPort.warpExitDistanceKm ?? deterministicExitDistanceKm(toPort.systemId, primaryMode);
-      const targetSpeed = sublightTargetSpeed(route, ship);
-      const thrustRatio = sublightThrustRatio(route, ship);
-      const carriedInterstellarFuelTonnes = interstellarFuelLoadUnits * FUEL_UNIT_MASS_TONNES;
-      const departureTransit = estimateSublightTransit(ship, departureDistance, installedCabins, carriedInterstellarFuelTonnes, targetSpeed, thrustRatio);
-      const arrivalTransit = estimateSublightTransit(ship, arrivalDistance, installedCabins, 0, targetSpeed, thrustRatio);
-      sublightHours = departureTransit.totalHours + arrivalTransit.totalHours;
-      sublightFuelUnits = departureTransit.fuelUnits + arrivalTransit.fuelUnits;
-      sublightFuelLoadUnits = departureTransit.requiredFuelLoadUnits + arrivalTransit.requiredFuelLoadUnits;
+      const distanceLightYears = interstellarLegs.reduce((sum, leg) => sum + leg.distance, 0);
+      const distanceFuelModifier = interstellarLegs.reduce((sum, leg) => sum + leg.distance * leg.fuelModifier, 0) / Math.max(1e-9, distanceLightYears);
+      const distanceTimeModifier = interstellarLegs.reduce((sum, leg) => sum + leg.distance * leg.timeModifier, 0) / Math.max(1e-9, distanceLightYears);
+      const build = route.buildConfiguration
+        ? { ...route.buildConfiguration, cabins: installedCabins }
+        : defaultBuildForShipType(ship, installedCabins);
+      const hull = hullVariantFromShipType(ship);
+      const missionInput = {
+        build,
+        hull,
+        distanceLightYears: distanceLightYears * distanceFuelModifier,
+        ftlSpeedLyPerDay: modeValue(ship.speedByMode, primaryMode, "Speed") * routeCruiseRatio(route, ship),
+        thrustRatio: sublightThrustRatio(route, ship),
+        targetSublightSpeedKmPerSecond: sublightTargetSpeed(route, ship),
+        sublightDistanceAu: ((departureDistance + arrivalDistance) / 2) / 149_597_870.7,
+      };
+      const emptyMission = resolveShipMission({ ...missionInput, passengerCount: 0 });
+      const fullMission = resolveShipMission({ ...missionInput, passengerCount: seatsPerDeparture });
+      if (!fullMission.feasible) throw new Error(`${ship.name} cannot cover ${fromPort.name} to ${toPort.name}: ${fullMission.infeasibleReasons.join("；")}`);
+      const departurePhase = emptyMission.phases.find((phase) => phase.kind === "departure")!;
+      const arrivalPhase = emptyMission.phases.find((phase) => phase.kind === "arrival")!;
+      const ftlPhase = emptyMission.phases.find((phase) => phase.kind === "interstellar")!;
+      sublightHours = departurePhase.hours + arrivalPhase.hours;
+      departureSublightHours = departurePhase.hours;
+      arrivalSublightHours = arrivalPhase.hours;
+      sublightFuelUnits = departurePhase.fuelBurnTonnes + arrivalPhase.fuelBurnTonnes;
+      interstellarHours = ftlPhase.hours * distanceTimeModifier;
+      interstellarFuelUnits = ftlPhase.fuelBurnTonnes;
+      fuelConsumptionEmpty = emptyMission.totalFuelBurnTonnes;
+      fuelConsumptionFull = fullMission.totalFuelBurnTonnes;
+      fuelLoadEmpty = emptyMission.initialFuelTonnes;
+      fuelLoadFull = fullMission.initialFuelTonnes;
     } else {
       const localDistanceKm = Math.max(1, legs.reduce((sum, leg) => sum + leg.distance, 0)) * 1_000_000;
       const transit = estimateSublightTransit(ship, localDistanceKm, installedCabins, 0, sublightTargetSpeed(route, ship), sublightThrustRatio(route, ship));
       sublightHours = transit.totalHours;
+      departureSublightHours = transit.totalHours;
       sublightFuelUnits = transit.fuelUnits;
-      sublightFuelLoadUnits = transit.requiredFuelLoadUnits;
+      fuelConsumptionEmpty = transit.fuelTonnes;
+      fuelConsumptionFull = transit.fuelTonnes + seatsPerDeparture * 0.1 * (transit.fuelTonnes / Math.max(1, transit.grossMassTonnes));
+      fuelLoadEmpty = fuelConsumptionEmpty;
+      fuelLoadFull = fuelConsumptionFull;
     }
     const travelHours = interstellarHours + sublightHours;
     const stopHours = Math.max(to.minimumStopHours, ship.turnaroundHours);
-    const fuelConsumptionEmpty = interstellarFuelUnits + sublightFuelUnits;
-    // v0.6 intentionally ignores passenger mass; empty and occupied missions burn the same fuel.
-    const fuelConsumptionFull = fuelConsumptionEmpty;
-    const fuelLoadEmpty = interstellarFuelLoadUnits + sublightFuelLoadUnits;
-    const fuelLoadFull = fuelLoadEmpty;
-    if (fuelLoadFull * FUEL_UNIT_MASS_TONNES > ship.fuelCapacityTonnes + 1e-6) {
+    if (ship.hullVariantId && fuelLoadFull > ship.fuelCapacityTonnes + 1e-6) {
       throw new Error(`${ship.name} fuel capacity cannot cover ${fromPort.name} to ${toPort.name}`);
     }
     const emptyFuelCost = fuelConsumptionEmpty * fromPort.fuelPrice * FUEL_OPERATING_COST_SCALE;
@@ -357,6 +380,9 @@ export function buildRouteServices(
       portCost: toPort.serviceFee + Math.max(0, route.slotBidPerMovement ?? 0) * 2,
       operatingCost,
       sublightHours,
+      departureSublightHours,
+      interstellarHours,
+      arrivalSublightHours,
       sublightFuelUnits,
       interstellarFuelUnits,
     });
@@ -523,6 +549,9 @@ export function buildRouteServices(
       scheduledDepartureMinutes,
       scheduleQuality,
       sublightHours: group.reduce((sum, item) => sum + item.sublightHours, 0),
+      departureSublightHours: group.reduce((sum, item) => sum + item.departureSublightHours, 0),
+      interstellarHours: group.reduce((sum, item) => sum + item.interstellarHours, 0),
+      arrivalSublightHours: group.reduce((sum, item) => sum + item.arrivalSublightHours, 0),
       sublightFuelUnits: group.reduce((sum, item) => sum + item.sublightFuelUnits, 0),
       interstellarFuelUnits: group.reduce((sum, item) => sum + item.interstellarFuelUnits, 0),
     });

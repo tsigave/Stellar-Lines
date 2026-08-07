@@ -1,4 +1,4 @@
-import { simulateCampaign } from "./campaign.js";
+﻿import { simulateCampaign } from "./campaign.js";
 import { explainJourneyChoice } from "./choice.js";
 import { PASSENGER_CLASSES, PASSENGER_TYPES } from "./types.js";
 import { applyEventsToWorldLegs, eventIntensity, fuelEventIntensity } from "./events.js";
@@ -13,6 +13,13 @@ import {
 } from "./scheduling.js";
 import { FIXED_MAINTENANCE_COST_SCALE, FUEL_OPERATING_COST_SCALE } from "./parameters.js";
 import { deterministicExitDistanceKm, estimateSublightTransit } from "./fuel.js";
+import {
+  defaultBuildForShipType,
+  FTL_DRIVE_MODELS,
+  hullVariantFromShipType,
+  resolveShipMission,
+  SUBLIGHT_ENGINE_MODELS,
+} from "./propulsion.js";
 import type {
   CabinConfiguration,
   CampaignDay,
@@ -24,13 +31,14 @@ import type {
   Route,
   RouteCostBreakdown,
   ShipType,
+  ShipBuildConfiguration,
   SimulationScenario,
   Starport,
   TravelMode,
   WorldLeg,
 } from "./types.js";
 
-export const GAME_STATE_VERSION = 13;
+export const GAME_STATE_VERSION = 14;
 export const STARTING_CASH = 3_000_000;
 export const ROUTE_OPENING_COST = 25_000;
 export const DAILY_COMPANY_OVERHEAD = 700;
@@ -121,6 +129,8 @@ export interface OwnedShip {
   reserveForRouteId?: string | null;
   /** 采购时预先指定；完成配置后可从下一可用时隙加入。 */
   plannedRouteId?: string | null;
+  /** Immutable purchase-time propulsion build; replacement orders inherit it. */
+  build?: ShipBuildConfiguration;
 }
 
 export interface PendingFleetChange {
@@ -166,12 +176,14 @@ export interface ShipPurchaseOrder {
   /** Automatic renewal orders pair each delivered ship with one existing ship. */
   replacementShipIds?: readonly string[];
   targetRouteId?: string | null;
+  build: ShipBuildConfiguration;
 }
 
 export interface ShipPurchaseLineInput {
   shipTypeId: string;
   quantity: number;
   targetRouteId?: string | null;
+  build?: ShipBuildConfiguration;
 }
 
 export interface StarportCapacityInvestment {
@@ -185,6 +197,7 @@ export interface FleetConfiguration {
   shipTypeId: string;
   name: string;
   cabins: CabinConfiguration;
+  build: ShipBuildConfiguration;
 }
 
 export const CABIN_SPACE_PER_SEAT: CabinConfiguration = {
@@ -288,7 +301,7 @@ export function quoteShipPurchaseAgreement(
 ): ShipPurchaseAgreementQuote {
   const quantitiesByType = new Map<string, ShipPurchaseLineInput>();
   for (const line of requestedLines) {
-    const key = `${line.shipTypeId}:${line.targetRouteId ?? "standby"}`;
+    const key = `${line.shipTypeId}:${line.targetRouteId ?? "standby"}:${JSON.stringify(line.build ?? null)}`;
     const current = quantitiesByType.get(key);
     quantitiesByType.set(key, { ...line, quantity: (current?.quantity ?? 0) + line.quantity });
   }
@@ -308,16 +321,22 @@ export function quoteShipPurchaseAgreement(
     if (targetRoute?.routingMode && !shipType.supportedModes.includes(targetRoute.routingMode)) {
       throw new Error(`${shipType.name} 不支持预定航线的推进方式`);
     }
+    const hull = hullVariantFromShipType(shipType);
+    const build = line.build ?? defaultBuildForShipType(shipType);
+    if (build.hullVariantId !== hull.id) throw new Error("采购配置与所选船体不匹配");
+    const resolvedBuild = resolveShipMission({ build, hull, distanceLightYears: 0 });
+    if (!resolvedBuild.feasible) throw new Error(resolvedBuild.infeasibleReasons.join("；"));
     const offer = shipyardOfferFor(state, shipType);
     const inventoryUsed = Math.min(offer.inventory, line.quantity);
     const factoryQuantity = line.quantity - inventoryUsed;
     const manufacturingDays = factoryQuantity === 0
       ? 1
-      : Math.ceil(8 + shipType.structuralMassTonnes / 95 + offer.popularity * 32 + factoryQuantity * 1.6);
-    const unitPrice = Math.round(shipType.purchasePrice * (1 - offer.discountRate) * (1 - agreementDiscountRate));
+      : Math.ceil(hull.deliveryDays + offer.popularity * 18 + factoryQuantity * 1.6);
+    const unitPrice = Math.round(resolvedBuild.purchasePrice * (1 - offer.discountRate) * (1 - agreementDiscountRate));
     return {
       ...line,
-      listUnitPrice: shipType.purchasePrice,
+      build,
+      listUnitPrice: resolvedBuild.purchasePrice,
       unitPrice,
       marketDiscountRate: offer.discountRate,
       agreementDiscountRate,
@@ -664,6 +683,7 @@ export function buildGameSchedule(
       ...(committed ? { currentPortId: committed.toPortId, availableMinute: committed.arrivalMinute } : ship.currentPortId ? { currentPortId: ship.currentPortId } : {}), commissionedDay: ship.commissionedDay,
       flightHoursSinceMaintenance: ship.flightHoursSinceMaintenance,
       maintenanceState: shipMaintenanceState(ship, state.day),
+      buildConfiguration: configuration.build,
       ...(ship.reserveForRouteId !== undefined ? { reserveForRouteId: ship.reserveForRouteId } : {}),
     }];
   });
@@ -741,11 +761,16 @@ export function buildGameSchedule(
     const latest = [...(state.history ?? [])].reverse().flatMap((record) => record.routes).find((summary) => summary.routeId === route.id);
     return [route.id, latest?.loadFactor ?? 0.7];
   }));
+  const playerRoutesWithBuild = state.routes.map((route) => {
+    const assigned = state.fleet.find((ship) => ship.routeId === route.id && ship.shipTypeId === route.shipTypeId);
+    const configuration = assigned ? fleetConfigurationForShip(state, assigned) : undefined;
+    return configuration ? { ...route, buildConfiguration: configuration.build } : route;
+  });
   const schedule = generateFlightSchedule({
     seed: state.config.seed,
     startDay: state.day,
     numberOfDays,
-    routes: [...aiRoutes, ...state.routes],
+    routes: [...aiRoutes, ...playerRoutesWithBuild],
     ships: [...aiShips, ...validShips],
     shipTypes,
     ports: galaxy.ports,
@@ -804,6 +829,7 @@ function operationalPlayerRoutes(state: GameState, shipTypes: readonly ShipType[
         shipTypeId,
         assignedShips: typeShips.length,
         cabinCapacityByClass,
+        buildConfiguration: configurations[0]!.build,
         economics: {
           fixedMaintenancePerDay: Math.max(0, maintenance.total - maintenance.ageSurcharge),
           ageSurchargePerDay: maintenance.ageSurcharge,
@@ -837,6 +863,7 @@ export function createNewGame(
 ): GameState {
   const basePort = galaxy.ports.find((port) => port.id === basePortId);
   if (!basePort) throw new Error("请选择一个有效的基地星球");
+  const starterType = shipTypes.find((shipType) => shipType.id === "meridian-liner");
   const initial: GameState = {
     version: GAME_STATE_VERSION,
     config: copyConfig(config),
@@ -855,8 +882,9 @@ export function createNewGame(
         maintenanceUntilDay: null,
         configurationId: null,
         commissionedDay: 1,
-        purchasePricePaid: shipTypes.find((shipType) => shipType.id === "meridian-liner")?.purchasePrice ?? 2_200_000,
+        purchasePricePaid: starterType?.purchasePrice ?? 2_200_000,
         currentPortId: basePort.id,
+        ...(starterType ? { build: defaultBuildForShipType(starterType) } : {}),
       },
     ],
     fleetConfigurations: [],
@@ -904,108 +932,9 @@ export function createNewGame(
 }
 
 export function migrateGameState(value: unknown): unknown {
-  if (!value || typeof value !== "object") return value;
-  let candidate = value as Record<string, unknown>;
-  if (
-    candidate.version === 8 &&
-    (candidate.autoSellAgeYears === null || typeof candidate.autoSellAgeYears === "number")
-  ) {
-    const { autoSellAgeYears, ...rest } = candidate;
-    candidate = {
-      ...rest,
-      version: 9,
-      autoReplacementAgeYears: autoSellAgeYears,
-    };
-  }
-  if (candidate.version === 9 && typeof candidate.basePortId === "string") {
-    candidate = {
-      ...candidate,
-      version: 10,
-      fuelStorage: {
-        portId: candidate.basePortId,
-        capacity: CORE_FUEL_STORAGE_CAPACITY,
-        quantity: 0,
-        averageUnitCost: 0,
-        autoBuyPriceThreshold: null,
-        inventoryUsePriceThreshold: null,
-      },
-    };
-  }
-  if (candidate.version === 10) {
-    const legacyStorage = candidate.fuelStorage && typeof candidate.fuelStorage === "object"
-      ? candidate.fuelStorage as Record<string, unknown>
-      : {};
-    const quantity = typeof legacyStorage.quantity === "number" ? legacyStorage.quantity : 0;
-    const averageUnitCost = typeof legacyStorage.averageUnitCost === "number"
-      ? legacyStorage.averageUnitCost
-      : 0;
-    const legacyMarket = Array.isArray(candidate.fuelMarket) ? candidate.fuelMarket : [];
-    const basePortId = typeof candidate.basePortId === "string" ? candidate.basePortId : "";
-    const fuelMarket = legacyMarket.flatMap((record) => {
-      if (!record || typeof record !== "object") return [];
-      const entry = record as { day?: unknown; price?: unknown; prices?: unknown };
-      if (typeof entry.day !== "number") return [];
-      if (typeof entry.price === "number") return [{ day: entry.day, price: entry.price }];
-      if (!entry.prices || typeof entry.prices !== "object") return [];
-      const prices = entry.prices as Record<string, unknown>;
-      const preferred = prices[basePortId];
-      const fallback = Object.values(prices).find((price) => typeof price === "number");
-      const price = typeof preferred === "number" ? preferred : fallback;
-      return typeof price === "number" ? [{ day: entry.day, price }] : [];
-    });
-    const { fuelStorage: _legacyFuelStorage, ...rest } = candidate;
-    candidate = {
-      ...rest,
-      version: 11,
-      fuelMarket,
-      fuelWarehouse: {
-        rented: quantity > 0,
-        capacity: CORE_FUEL_STORAGE_CAPACITY,
-        quantity,
-        averageUnitCost,
-        dailyWithdrawalLimit: null,
-        surplusPolicy: "store-first",
-      },
-      fuelContracts: [],
-      fuelAutoContractPolicy: {
-        enabled: false,
-        triggerPrice: 1.5,
-        termWeeks: 16,
-        spotExposureShare: 0.4,
-      },
-      nextFuelContractNumber: 1,
-    };
-  }
-  if (candidate.version === 11) {
-    const basePortId = typeof candidate.basePortId === "string" ? candidate.basePortId : "";
-    const fleet = Array.isArray(candidate.fleet) ? candidate.fleet.map((ship) =>
-      ship && typeof ship === "object" ? { ...ship, currentPortId: (ship as Record<string, unknown>).currentPortId ?? basePortId } : ship
-    ) : [];
-    candidate = {
-      ...candidate,
-      version: 12,
-      fleet,
-      scheduledFlights: [],
-      shipLogs: [],
-      starportCapacity: [],
-      pendingFleetChanges: [],
-    };
-  }
-  if (candidate.version === 12) {
-    candidate = {
-      ...candidate,
-      version: GAME_STATE_VERSION,
-      fleet: Array.isArray(candidate.fleet) ? candidate.fleet.map((ship) => ship && typeof ship === "object"
-        ? { ...ship, reserveForRouteId: null, plannedRouteId: null }
-        : ship) : [],
-      starportCapacityInvestments: {},
-      companyReputation: 70,
-      localReputation: {},
-      unsettledFinancialEvents: [],
-      staticAiRoutes: [],
-    };
-  }
-  return candidate;
+  // v0.7 is an intentional physics/save boundary. Retain old storage untouched,
+  // but never reinterpret v0.6.1 aggregate ship and FU data as v0.7 mass state.
+  return value;
 }
 
 export function isGameState(value: unknown): value is GameState {
@@ -1024,8 +953,10 @@ export function isGameState(value: unknown): value is GameState {
         typeof (ship as Partial<OwnedShip>).configurationId === "string")
     ) &&
     Array.isArray(candidate.fleetConfigurations) &&
+    candidate.fleetConfigurations.every((configuration) => !!configuration?.build) &&
     Array.isArray(candidate.shipyardMarket) &&
     Array.isArray(candidate.shipPurchaseOrders) &&
+    candidate.shipPurchaseOrders.every((order) => !!order?.build) &&
     Array.isArray(candidate.routes) &&
     Array.isArray(candidate.history) &&
     Array.isArray(candidate.fuelMarket) &&
@@ -1110,7 +1041,15 @@ export function orderShipReplacement(
   if (state.shipPurchaseOrders.some((order) => order.replacementShipIds?.includes(shipId))) {
     throw new Error("该舰船已有替代订单");
   }
-  const purchased = placeShipPurchaseAgreement(state, [{ shipTypeId: ship.shipTypeId, quantity: 1, targetRouteId: ship.routeId }], shipTypes);
+  const configuration = fleetConfigurationForShip(state, ship);
+  const inheritedBuild = ship.build ?? configuration?.build;
+  const replacementLine: ShipPurchaseLineInput = {
+    shipTypeId: ship.shipTypeId,
+    quantity: 1,
+    targetRouteId: ship.routeId,
+    ...(inheritedBuild ? { build: inheritedBuild } : {}),
+  };
+  const purchased = placeShipPurchaseAgreement(state, [replacementLine], shipTypes);
   const agreementId = purchased.state.shipPurchaseOrders.at(-1)?.agreementId;
   return {
     state: { ...purchased.state, shipPurchaseOrders: purchased.state.shipPurchaseOrders.map((order) =>
@@ -1140,6 +1079,7 @@ export function placeShipPurchaseAgreement(
     orderedDay: state.day,
     deliveryDay: line.deliveryDay,
     targetRouteId: line.targetRouteId ?? null,
+    build: line.build ?? defaultBuildForShipType(shipTypes.find((candidate) => candidate.id === line.shipTypeId)!),
   }));
   const inventoryByType = new Map(quote.lines.map((line) => [line.shipTypeId, line.inventoryUsed]));
   return {
@@ -1182,17 +1122,22 @@ export function createFleetConfiguration(
   name: string,
   cabins: CabinConfiguration,
   shipTypes: readonly ShipType[],
+  requestedBuild?: ShipBuildConfiguration,
 ): GameActionResult {
   requirePlaying(state);
   const shipType = shipTypes.find((candidate) => candidate.id === shipTypeId);
   if (!shipType) throw new Error("船型数据不存在");
   const normalized = normalizeFleetConfiguration(shipType, cabins);
+  const build = { ...(requestedBuild ?? defaultBuildForShipType(shipType, normalized)), cabins: normalized };
+  const resolved = resolveShipMission({ build, hull: hullVariantFromShipType(shipType), distanceLightYears: 0 });
+  if (!resolved.feasible) throw new Error(resolved.infeasibleReasons.join("；"));
   const number = state.nextFleetConfigurationNumber;
   const configuration: FleetConfiguration = {
     id: `fleet-config-${number}`,
     shipTypeId,
     name: name.trim() || `${shipType.familyName}方案 ${number}`,
     cabins: normalized,
+    build,
   };
   return {
     state: {
@@ -1210,6 +1155,7 @@ export function updateFleetConfiguration(
   name: string,
   cabins: CabinConfiguration,
   shipTypes: readonly ShipType[],
+  requestedBuild?: ShipBuildConfiguration,
 ): GameActionResult {
   requirePlaying(state);
   const configuration = state.fleetConfigurations.find((candidate) => candidate.id === configurationId);
@@ -1220,10 +1166,14 @@ export function updateFleetConfiguration(
   const shipType = shipTypes.find((candidate) => candidate.id === configuration.shipTypeId);
   if (!shipType) throw new Error("船型数据不存在");
   const normalized = normalizeFleetConfiguration(shipType, cabins);
+  const build = { ...(requestedBuild ?? configuration.build), cabins: normalized };
+  const resolved = resolveShipMission({ build, hull: hullVariantFromShipType(shipType), distanceLightYears: 0 });
+  if (!resolved.feasible) throw new Error(resolved.infeasibleReasons.join("；"));
   const updated = {
     ...configuration,
     name: name.trim() || configuration.name,
     cabins: normalized,
+    build,
   };
   return {
     state: {
@@ -1360,6 +1310,7 @@ export function createPlayerRoute(
     },
     maintenanceAllowanceHours: 0,
     active: true,
+    buildConfiguration: configurations[0]!.build,
     cruiseRatioByShipType: Object.fromEntries(concreteTypes.map((type) => [type.id, 1])),
     sublightTargetSpeedKmPerSecondByShipType: Object.fromEntries(concreteTypes.map((type) => [type.id, Math.min(80, type.maximumSublightSpeedKmPerSecond ?? 80)])),
     sublightThrustRatioByShipType: Object.fromEntries(concreteTypes.map((type) => [type.id, type.fuelOptimalThrustRatio ?? 0.72])),
@@ -1370,8 +1321,10 @@ export function createPlayerRoute(
     slotApplicationDay: state.day,
   };
   for (const selectedType of concreteTypes) {
+    const selectedTypeShip = selectedShips.find((ship) => ship.shipTypeId === selectedType.id)!;
+    const selectedTypeConfiguration = fleetConfigurationForShip(state, selectedTypeShip)!;
     buildRouteServices(
-      { ...route, shipTypeId: selectedType.id, assignedShips: 1 },
+      { ...route, shipTypeId: selectedType.id, assignedShips: 1, buildConfiguration: selectedTypeConfiguration.build },
       selectedType,
       galaxy.ports,
       gameWorldLegs(galaxy),
@@ -1492,7 +1445,7 @@ export function quoteFuelContract(
   const normalizedWeeks = clamp(Math.round(termWeeks), 1, 32);
   const normalizedUnits = Math.floor(weeklyUnits / FUEL_CONTRACT_QUANTITY_STEP) * FUEL_CONTRACT_QUANTITY_STEP;
   if (normalizedUnits < FUEL_CONTRACT_MINIMUM_WEEKLY_UNITS) {
-    throw new Error(`燃料合约最低供应量为每周 ${FUEL_CONTRACT_MINIMUM_WEEKLY_UNITS} FU`);
+    throw new Error(`燃料合约最低供应量为每周 ${FUEL_CONTRACT_MINIMUM_WEEKLY_UNITS} t`);
   }
   const marketPrice = currentFuelPrice(state);
   const premiumRate = fuelContractPremiumRate(normalizedWeeks);
@@ -1558,7 +1511,7 @@ export function signFuelContract(
   const quote = quoteFuelContract(state, termWeeks, weeklyUnits);
   return {
     state: createFuelContractFromQuote(state, quote, false),
-    message: `燃料合约已签订：每周 ${quote.weeklyUnits.toFixed(0)} FU、${quote.termWeeks} 周，已支付 20% 定金 ${quote.deposit.toFixed(0)} Cr`,
+    message: `燃料合约已签订：每周 ${quote.weeklyUnits.toFixed(0)} t、${quote.termWeeks} 周，已支付 20% 定金 ${quote.deposit.toFixed(0)} Cr`,
   };
 }
 
@@ -1640,7 +1593,7 @@ export function setFuelWarehousePolicy(
         surplusPolicy,
       },
     },
-    message: `仓库策略已更新：${normalizedLimit === null ? "每日提取不限量" : `每日最多提取 ${normalizedLimit.toFixed(0)} FU`}；${surplusPolicy === "store-first" ? "合约盈余优先入库" : "合约盈余直接出售"}`,
+    message: `仓库策略已更新：${normalizedLimit === null ? "每日提取不限量" : `每日最多提取 ${normalizedLimit.toFixed(0)} t`}；${surplusPolicy === "store-first" ? "合约盈余优先入库" : "合约盈余直接出售"}`,
   };
 }
 
@@ -1664,7 +1617,7 @@ export function buyFuelForWarehouse(state: GameState, units: number): GameAction
         averageUnitCost: (previousValue + cost) / nextQuantity,
       },
     },
-    message: `已按当前市场价买入 ${quantity.toFixed(1)} FU 燃料并存入仓库`,
+    message: `已按当前市场价买入 ${quantity.toFixed(1)} t 燃料并存入仓库`,
   };
 }
 
@@ -1685,7 +1638,7 @@ export function sellFuelFromWarehouse(state: GameState, units: number): GameActi
         averageUnitCost: nextQuantity > 1e-9 ? state.fuelWarehouse.averageUnitCost : 0,
       },
     },
-    message: `已按市场交付价的 80% 出售 ${quantity.toFixed(1)} FU 仓库燃料`,
+    message: `已按市场交付价的 80% 出售 ${quantity.toFixed(1)} t 仓库燃料`,
   };
 }
 
@@ -1723,6 +1676,7 @@ export function deliverShipPurchaseOrders(
         currentPortId: replacedShip?.currentPortId ?? state.basePortId,
         reserveForRouteId: replacedShip?.reserveForRouteId ?? null,
         plannedRouteId: replacedShip?.plannedRouteId ?? order.targetRouteId ?? null,
+        build: replacedShip?.build ?? order.build,
       });
     }
   }
@@ -2497,6 +2451,7 @@ export interface FleetFixedMaintenanceSummary {
   supplierDiscount: number;
   familyDiscount: number;
   ageSurcharge: number;
+  diversityOverhead: number;
 }
 
 export function fleetFixedMaintenanceCost(
@@ -2518,9 +2473,21 @@ export function fleetFixedMaintenanceCost(
   let supplierSavings = 0;
   let familySavings = 0;
   let ageSurcharge = 0;
+  const componentSuppliers = new Set<string>();
+  const componentFamilies = new Set<string>();
+  const componentModels = new Set<string>();
   for (const ship of fleet) {
     const type = typeById.get(ship.shipTypeId);
     if (!type) continue;
+    const build = ship.build ?? defaultBuildForShipType(type);
+    const engine = SUBLIGHT_ENGINE_MODELS.find((candidate) => candidate.id === build.sublightEngineModelId);
+    const drive = FTL_DRIVE_MODELS.find((candidate) => candidate.id === build.ftlDriveModelId);
+    for (const component of [engine, drive]) {
+      if (!component) continue;
+      componentSuppliers.add(component.manufacturer);
+      componentFamilies.add(`${component.manufacturer}:${component.family}`);
+      componentModels.add(component.id);
+    }
     const originalBase = type.fixedMaintenanceCostPerDay * FIXED_MAINTENANCE_COST_SCALE;
     const base = originalBase * (1 + shipAgeYears(ship, currentDay) * SHIP_AGE_MAINTENANCE_RATE);
     const supplierDiscount = Math.min(0.18, Math.max(0, (supplierCounts.get(type.manufacturer) ?? 1) - 1) * 0.015);
@@ -2533,12 +2500,17 @@ export function fleetFixedMaintenanceCost(
     familySavings += afterSupplier - discounted;
     total += discounted;
   }
+  const diversityOverhead = componentSuppliers.size * 250 + componentFamilies.size * 180 +
+    Math.max(0, componentModels.size - componentFamilies.size) * 45;
+  total += diversityOverhead;
+  undiscountedTotal += diversityOverhead;
   return {
     total: Number(total.toFixed(2)),
     undiscountedTotal: Number(undiscountedTotal.toFixed(2)),
     supplierDiscount: Number(supplierSavings.toFixed(2)),
     familyDiscount: Number(familySavings.toFixed(2)),
     ageSurcharge: Number(ageSurcharge.toFixed(2)),
+    diversityOverhead: Number(diversityOverhead.toFixed(2)),
   };
 }
 
@@ -2661,7 +2633,7 @@ function settleFuelDay(
     ? (remainingInventoryValue + warehouseStoredValue) / warehouseQuantity
     : 0;
   const warehouseRent = state.fuelWarehouse.rented
-    ? warehouseQuantity * 0.1 * FUEL_WAREHOUSE_RENT_PER_TONNE_DAY
+    ? warehouseQuantity * FUEL_WAREHOUSE_RENT_PER_TONNE_DAY
     : 0;
   const consumedCost = contractUsedCost + warehouseUsedValue + spotPurchaseCost;
   return {
@@ -2979,7 +2951,7 @@ export function advanceGameDay(
       : deliveredCount > 0
       ? `船厂今日交付 ${deliveredCount} 艘舰船；请为新船分配统一配置方案。`
       : automaticContract.signedWeeklyUnits > 0
-      ? `燃料价格达到自动签约条件，已新增每周 ${automaticContract.signedWeeklyUnits.toFixed(0)} FU 的燃料合约并支付定金。`
+      ? `燃料价格达到自动签约条件，已新增每周 ${automaticContract.signedWeeklyUnits.toFixed(0)} t 的燃料合约并支付定金。`
       : automaticMaintenance.maintainedShipNames.length > 0
       ? `${automaticMaintenance.maintainedShipNames.join("、")} 返抵主基地，维护值已低于 ${state.autoMaintenanceThreshold}% 阈值并自动进场维护。`
       : justCompletedGoal

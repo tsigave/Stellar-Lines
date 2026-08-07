@@ -9,6 +9,7 @@ import type {
   WorldLeg,
 } from "../types.js";
 import { deterministicExitDistanceKm } from "../fuel.js";
+import { projectShipTypeToV07 } from "../propulsion.js";
 
 type PortValues = Pick<
   Starport,
@@ -424,7 +425,7 @@ const SHIP_CATALOG: readonly ShipType[] = [
   }),
 ];
 
-export const PROOF_OF_CONCEPT_SHIPS: readonly ShipType[] = SHIP_CATALOG.map((ship, index) => ({
+export const PROOF_OF_CONCEPT_SHIPS: readonly ShipType[] = SHIP_CATALOG.map((ship, index) => projectShipTypeToV07({
   ...ship,
   minimumCruiseRatio: 0.7,
   maximumCruiseRatio: 1.1,
@@ -518,7 +519,7 @@ export const PROOF_OF_CONCEPT_ROUTES: readonly Route[] = [
   ),
   route(
     "luxury-grand-tour", "celestial-lines", "Grand Tour",
-    ["alpha-prime", "alpha-junction", "vega-hub", "aurora"],
+    ["alpha-prime", "alpha-junction", "sirius-hub", "vega-hub", "aurora"],
     "aurora-clipper", 1, 1.7,
   ),
 ];

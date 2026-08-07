@@ -2,11 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CABIN_SPACE_PER_SEAT,
   cabinSpaceUsed,
+  compareTechnicalStop,
+  currentFuelPrice,
   estimateFuelConsumption,
+  defaultBuildForShipType,
+  FTL_DRIVE_MODELS,
   FIXED_MAINTENANCE_COST_SCALE,
   fleetConfigurationForShip,
   fleetFixedMaintenanceCost,
   quoteShipPurchaseAgreement,
+  hullVariantFromShipType,
+  OPTIONAL_MODULES,
+  resolveShipMission,
+  SUBLIGHT_ENGINE_MODELS,
   shipAgeYears,
   shipComfortAtAge,
   shipMaintenanceCost,
@@ -18,6 +26,7 @@ import {
   type GameState,
   type OwnedShip,
   type ShipPurchaseLineInput,
+  type ShipBuildConfiguration,
   type ShipType,
   type TravelMode,
 } from "../../index.js";
@@ -31,11 +40,13 @@ interface FleetPanelProps {
     shipTypeId: string,
     name: string,
     cabins: CabinConfiguration,
+    build?: ShipBuildConfiguration,
   ) => void;
   onUpdateConfiguration: (
     configurationId: string,
     name: string,
     cabins: CabinConfiguration,
+    build?: ShipBuildConfiguration,
   ) => void;
   onAssignShips: (configurationId: string, shipIds: readonly string[]) => void;
   onMaintainShip: (shipId: string) => void;
@@ -121,12 +132,13 @@ function ConfigurationCard({
         <input value={name} disabled={locked} onChange={(event) => setName(event.target.value)} aria-label="配置方案名称" />
         <span>{assigned.length} 艘已分配</span>
       </div>
+      <small>{SUBLIGHT_ENGINE_MODELS.find((engine) => engine.id === configuration.build.sublightEngineModelId)?.model ?? configuration.build.sublightEngineModelId} · {FTL_DRIVE_MODELS.find((drive) => drive.id === configuration.build.ftlDriveModelId)?.model ?? "无 FTL"} · 模块 {configuration.build.optionalModuleIds.length}</small>
       <div className="cabin-editor-heading">
         <strong>统一客舱方案</strong>
         <span className={invalid ? "over-capacity" : ""}>{usedSpace} / {type.cabinSpace} 空间</span>
       </div>
       <CabinInputs cabins={cabins} disabled={locked} onChange={setCabins} />
-      <p className="automatic-fuel-note">燃料将在每次出发前按航程与预计载荷自动配给，并额外保留 20% 应急燃料。</p>
+      <p className="automatic-fuel-note">燃料不属于配置，系统按抵达储备吨数反向求解每次任务的真实装载量。</p>
       <button className="save-configuration" disabled={locked || invalid} onClick={() => onUpdate(configuration.id, name, cabins)}>
         {locked ? "方案正在执行航线" : "保存统一方案"}
       </button>
@@ -159,9 +171,11 @@ function ConfigurationCard({
 
 function NewConfigurationCard({
   type,
+  build,
   onCreate,
 }: {
   type: ShipType;
+  build: ShipBuildConfiguration;
   onCreate: FleetPanelProps["onCreateConfiguration"];
 }) {
   const [name, setName] = useState("");
@@ -174,9 +188,9 @@ function NewConfigurationCard({
       <input value={name} placeholder="例如：短程全经济 / 商务快线" onChange={(event) => setName(event.target.value)} aria-label="新配置方案名称" />
       <div className="cabin-editor-heading"><strong>统一客舱方案</strong><span className={invalid ? "over-capacity" : ""}>{usedSpace} / {type.cabinSpace} 空间</span></div>
       <CabinInputs cabins={cabins} onChange={setCabins} />
-      <p className="automatic-fuel-note">系统按船体、客舱安装质量、航段和速度自动装载燃料；旅客质量忽略，并加入 20% 应急裕度。</p>
+      <p className="automatic-fuel-note">系统按船体、客舱、实际旅客质量、航段和抵达储备自动反算燃料。</p>
       <button className="save-configuration" disabled={invalid} onClick={() => {
-        onCreate(type.id, name, cabins);
+        onCreate(type.id, name, cabins, { ...build, cabins });
         setName("");
         setCabins({ premium: 0, business: 0, economy: 0 });
       }}>创建方案</button>
@@ -203,7 +217,7 @@ function OwnedShipCard({ ship, type, game, onMaintainShip, onReplaceShip }: {
       </div>
       <div className="ship-configuration-summary">
         <span>配置方案</span><strong>{configuration?.name ?? "未分配"}</strong>
-        {configuration && <small>头等 {configuration.cabins.premium} · 商务 {configuration.cabins.business} · 经济 {configuration.cabins.economy} · 自动装载燃料 + 20% 应急裕度</small>}
+        {configuration && <small>头等 {configuration.cabins.premium} · 商务 {configuration.cabins.business} · 经济 {configuration.cabins.economy} · 抵达储备 {configuration.build.destinationReserveTonnes.toFixed(1)} t</small>}
       </div>
       <div className="fleet-condition-row"><span>维护值 {ship.condition.toFixed(0)}%</span><span>本周期 {ship.flightHoursSinceMaintenance.toFixed(0)} 小时</span></div>
       <div className="ship-age-summary"><span>船龄 {ageYears.toFixed(1)} 年</span><span>舒适度 {effectiveComfort.toFixed(1)} / {type.comfort}</span><span>估值 {formatCredits(shipResaleValue(ship, type, game.day))}</span></div>
@@ -244,6 +258,7 @@ export function FleetPanel({
 }: FleetPanelProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [purchaseCart, setPurchaseCart] = useState<Record<string, number>>({});
+  const [purchaseBuilds, setPurchaseBuilds] = useState<Record<string, ShipBuildConfiguration>>({});
   const [purchaseTargetRouteId, setPurchaseTargetRouteId] = useState("standby");
   const familyGroups = useMemo(() => {
     const groups = new Map<string, { id: string; name: string; manufacturer: string; types: ShipType[] }>();
@@ -261,12 +276,50 @@ export function FleetPanel({
   const [selectedCatalogTypeId, setSelectedCatalogTypeId] = useState(() => shipTypes[0]?.id ?? "");
   const selectedFamily = familyGroups.find((family) => family.id === selectedFamilyId) ?? familyGroups[0];
   const selectedCatalogType = selectedFamily?.types.find((type) => type.id === selectedCatalogTypeId) ?? selectedFamily?.types[0];
+  const [draftBuild, setDraftBuild] = useState<ShipBuildConfiguration>(() => defaultBuildForShipType(shipTypes[0]!));
+  const [missionDistance, setMissionDistance] = useState(12);
+  const [missionPassengers, setMissionPassengers] = useState(40);
+  const [missionReserve, setMissionReserve] = useState(0);
+  const [missionSpeed, setMissionSpeed] = useState(6);
+  const [missionThrustRatio, setMissionThrustRatio] = useState(0.8);
+  useEffect(() => {
+    if (selectedCatalogType) {
+      const build = defaultBuildForShipType(selectedCatalogType);
+      setDraftBuild(build);
+      const drive = FTL_DRIVE_MODELS.find((candidate) => candidate.id === build.ftlDriveModelId);
+      const engine = SUBLIGHT_ENGINE_MODELS.find((candidate) => candidate.id === build.sublightEngineModelId);
+      if (drive) setMissionSpeed(drive.maximumSpeedLyPerDay);
+      if (engine) setMissionThrustRatio(engine.economyThrustRatio);
+    }
+  }, [selectedCatalogType?.id]);
+  const selectedHull = selectedCatalogType ? hullVariantFromShipType(selectedCatalogType) : null;
+  const selectedEngine = SUBLIGHT_ENGINE_MODELS.find((engine) => engine.id === draftBuild.sublightEngineModelId);
+  const selectedDrive = FTL_DRIVE_MODELS.find((drive) => drive.id === draftBuild.ftlDriveModelId);
+  const missionInput = selectedCatalogType && selectedHull ? {
+    build: { ...draftBuild, destinationReserveTonnes: missionReserve },
+    hull: selectedHull,
+    distanceLightYears: missionDistance,
+    passengerCount: missionPassengers,
+    ftlSpeedLyPerDay: missionSpeed,
+    thrustRatio: missionThrustRatio,
+  } : null;
+  const resolvedMission = useMemo(() => selectedCatalogType && selectedHull
+    ? resolveShipMission(missionInput!)
+    : null, [draftBuild, missionDistance, missionPassengers, missionReserve, missionSpeed, missionThrustRatio, selectedCatalogType, selectedHull]);
+  const technicalStopComparison = useMemo(() => missionInput && missionDistance > 0
+    ? compareTechnicalStop(missionInput)
+    : null, [draftBuild, missionDistance, missionPassengers, missionReserve, missionSpeed, missionThrustRatio, selectedCatalogType, selectedHull]);
   const quantityFor = (shipTypeId: string) => quantities[shipTypeId] ?? 1;
   const maintenance = useMemo(() => fleetFixedMaintenanceCost(game.fleet, shipTypes, game.day), [game.day, game.fleet, shipTypes]);
   const ownedTypeIds = [...new Set(game.fleet.map((ship) => ship.shipTypeId))];
   const purchaseLines = Object.entries(purchaseCart)
     .filter(([, quantity]) => quantity > 0)
-    .map(([shipTypeId, quantity]) => ({ shipTypeId, quantity, targetRouteId: purchaseTargetRouteId === "standby" ? null : purchaseTargetRouteId }));
+    .map(([shipTypeId, quantity]) => ({
+      shipTypeId,
+      quantity,
+      targetRouteId: purchaseTargetRouteId === "standby" ? null : purchaseTargetRouteId,
+      ...(purchaseBuilds[shipTypeId] ? { build: purchaseBuilds[shipTypeId] } : {}),
+    }));
   const purchaseQuote = purchaseLines.length > 0
     ? quoteShipPurchaseAgreement(game, purchaseLines, shipTypes)
     : null;
@@ -282,7 +335,7 @@ export function FleetPanel({
         </div>
         <div className="maintenance-cost-summary">
           <span>每日维护准备金（非现金）</span><strong>{formatCredits(maintenance.total)}</strong>
-          <small>船龄加价 {formatCredits(maintenance.ageSurcharge)} · 供应商节省 {formatCredits(maintenance.supplierDiscount)} · 系列节省 {formatCredits(maintenance.familyDiscount)}</small>
+          <small>船龄加价 {formatCredits(maintenance.ageSurcharge)} · 供应商/系列节省 {formatCredits(maintenance.supplierDiscount + maintenance.familyDiscount)} · 工具培训备件 {formatCredits(maintenance.diversityOverhead)}</small>
         </div>
         <div className="fleet-policy-stack top-policy">
           <div className="auto-maintenance-policy">
@@ -312,7 +365,7 @@ export function FleetPanel({
       </section>
 
       <section className="fleet-section glass-panel">
-        <div className="fleet-section-heading"><div><span className="eyebrow">CONFIGURATION LIBRARY</span><h2>船型统一配置方案</h2></div><p>配置方案属于舰船；每次出发前按船体、客舱安装质量、携带燃料质量、航段和速度自动装载燃料，暂不计旅客质量。</p></div>
+        <div className="fleet-section-heading"><div><span className="eyebrow">CONFIGURATION LIBRARY</span><h2>船型统一配置方案</h2></div><p>配置记录实际引擎、FTL 驱动与模块；每次出发按客舱、实际载客、抵达储备和分阶段物理重新结算。</p></div>
         {ownedTypeIds.map((shipTypeId) => {
           const type = shipTypes.find((candidate) => candidate.id === shipTypeId)!;
           const ships = game.fleet.filter((ship) => ship.shipTypeId === shipTypeId);
@@ -322,7 +375,7 @@ export function FleetPanel({
               <div className="type-configuration-heading"><div><strong>{type.name}</strong><span>{type.manufacturer} · {type.familyName}系列 {type.variant}</span></div><em>{ships.length} 艘 · {configurations.length} 个方案</em></div>
               <div className="configuration-grid">
                 {configurations.map((configuration) => <ConfigurationCard key={configuration.id} configuration={configuration} type={type} ships={ships} game={game} onUpdate={onUpdateConfiguration} onAssignShips={onAssignShips} />)}
-                <NewConfigurationCard type={type} onCreate={onCreateConfiguration} />
+                <NewConfigurationCard type={type} build={ships.find((ship) => ship.build)?.build ?? defaultBuildForShipType(type)} onCreate={onCreateConfiguration} />
               </div>
             </div>
           );
@@ -339,6 +392,28 @@ export function FleetPanel({
 
       <section className="fleet-section shipyard-section glass-panel">
         <div className="fleet-section-heading"><div><span className="eyebrow">SHIPYARD CATALOG</span><h2>购买舰船</h2></div><p>先选择系列，再在二级菜单选择具体子型号。当前共 {familyGroups.length} 个系列、{shipTypes.length} 个型号。</p></div>
+        {selectedCatalogType && selectedHull && resolvedMission && <div className="shipyard-builder-grid">
+          <article className="shipyard-builder-column hull-column">
+            <span className="eyebrow">1 · HULL</span><h3>船体与结构</h3>
+            <strong>{selectedCatalogType.name}</strong><small>{selectedCatalogType.manufacturer} · 安装级别 {selectedHull.installationClass}</small>
+            <dl><div><dt>结构质量</dt><dd>{selectedHull.structureMassTonnes.toFixed(1)} t</dd></div><div><dt>燃料舱</dt><dd>{selectedHull.fuelCapacityTonnes.toFixed(1)} t</dd></div><div><dt>最大起飞质量</dt><dd>{selectedHull.maximumTakeoffMassTonnes.toFixed(1)} t</dd></div><div><dt>插槽</dt><dd>引擎 {selectedHull.sublightEngineSlots} · FTL {selectedHull.ftlDriveSlots} · 模块 {selectedHull.optionalModuleSlots}</dd></div></dl>
+          </article>
+          <article className="shipyard-builder-column options-column">
+            <span className="eyebrow">2 · OUTFIT</span><h3>推进与选装</h3>
+            <label>亚光速引擎<select value={draftBuild.sublightEngineModelId} onChange={(event) => { const id = event.target.value; setDraftBuild((current) => ({ ...current, sublightEngineModelId: id })); const engine = SUBLIGHT_ENGINE_MODELS.find((candidate) => candidate.id === id); if (engine) setMissionThrustRatio(engine.economyThrustRatio); }}>{SUBLIGHT_ENGINE_MODELS.filter((engine) => engine.installationClass <= selectedHull.installationClass).map((engine) => <option key={engine.id} value={engine.id}>{engine.manufacturer} {engine.model} · {engine.maximumThrustMN.toFixed(1)} MN</option>)}</select></label>
+            {selectedHull.ftlDriveSlots > 0 && <label>FTL 驱动<select value={draftBuild.ftlDriveModelId ?? ""} onChange={(event) => { const id = event.target.value; setDraftBuild((current) => ({ ...current, ftlDriveModelId: id })); const drive = FTL_DRIVE_MODELS.find((candidate) => candidate.id === id); if (drive) setMissionSpeed(drive.maximumSpeedLyPerDay); }}>{FTL_DRIVE_MODELS.filter((drive) => drive.installationClass <= selectedHull.installationClass && selectedCatalogType.supportedModes.includes(drive.mode)).map((drive) => <option key={drive.id} value={drive.id}>{drive.mode === "warp" ? "曲率" : "超空间"} · {drive.manufacturer} {drive.model}</option>)}</select></label>}
+            <div className="module-picker"><strong>辅助模块（{draftBuild.optionalModuleIds.length}/{selectedHull.optionalModuleSlots}）</strong>{OPTIONAL_MODULES.filter((module) => module.installationClass <= selectedHull.installationClass).map((module) => <label key={module.id}><input type="checkbox" checked={draftBuild.optionalModuleIds.includes(module.id)} disabled={!draftBuild.optionalModuleIds.includes(module.id) && draftBuild.optionalModuleIds.length >= selectedHull.optionalModuleSlots} onChange={() => setDraftBuild((current) => ({ ...current, optionalModuleIds: current.optionalModuleIds.includes(module.id) ? current.optionalModuleIds.filter((id) => id !== module.id) : [...current.optionalModuleIds, module.id] }))}/><span>{module.name}</span><small>{module.massTonnes} t · {formatCredits(module.price)}</small></label>)}</div>
+          </article>
+          <article className="shipyard-builder-column mission-column">
+            <span className="eyebrow">3 · MISSION</span><h3>任务剖面分析</h3>
+            <div className="mission-inputs"><label>星际距离<input type="number" min="0" max="500" value={missionDistance} onChange={(event) => setMissionDistance(Math.max(0, Number(event.target.value) || 0))}/><small>ly</small></label><label>旅客<input type="number" min="0" value={missionPassengers} onChange={(event) => setMissionPassengers(Math.max(0, Number(event.target.value) || 0))}/><small>人</small></label><label>抵达储备<input type="number" min="0" value={missionReserve} onChange={(event) => setMissionReserve(Math.max(0, Number(event.target.value) || 0))}/><small>t</small></label>{selectedDrive && <label>FTL 速度<input type="number" min={selectedDrive.minimumSpeedLyPerDay} max={selectedDrive.maximumSpeedLyPerDay} step="0.1" value={missionSpeed} onChange={(event) => setMissionSpeed(Number(event.target.value) || selectedDrive.minimumSpeedLyPerDay)}/><small>ly/d</small></label>}{selectedEngine && <label>推力<input type="number" min="0.5" max="1" step="0.01" value={missionThrustRatio} onChange={(event) => setMissionThrustRatio(Math.max(.5, Math.min(1, Number(event.target.value) || .5)))}/><small>比例</small></label>}</div>
+            <div className="mission-verdict"><strong className={resolvedMission.feasible ? "positive-text" : "negative-text"}>{resolvedMission.feasible ? "任务可行" : "任务不可行"}</strong><span>起飞 {resolvedMission.takeoffMassTonnes.toFixed(1)} t · 燃料 {resolvedMission.initialFuelTonnes.toFixed(2)} t · 油箱 {(resolvedMission.fuelCapacityUtilization * 100).toFixed(1)}%</span><span>直达航程 {resolvedMission.maximumDirectRangeLightYears.toFixed(1)} ly · 总航时 {(resolvedMission.totalHours / 24).toFixed(2)} 日</span>{resolvedMission.infeasibleReasons.map((reason) => <small key={reason}>{reason}</small>)}</div>
+            <div className="mission-phases">{resolvedMission.phases.map((phase) => <div key={phase.kind}><span>{phase.kind === "departure" ? "出港" : phase.kind === "arrival" ? "进港" : "星际"}</span><strong>{phase.fuelBurnTonnes.toFixed(2)} t</strong><small>{phase.hours.toFixed(2)} h</small></div>)}</div>
+            <small>干质量 {resolvedMission.operatingDryMassTonnes.toFixed(1)} t · 加速度 {resolvedMission.accelerationMetersPerSecondSquared.toFixed(3)} m/s² · 采购价 {formatCredits(resolvedMission.purchasePrice)}</small>
+            <div className="mission-costs"><strong>单班完整成本</strong><span>燃料 {formatCredits(resolvedMission.totalFuelBurnTonnes * currentFuelPrice(game))}</span><span>飞时维护 {formatCredits(resolvedMission.maintenancePerFlightHour * resolvedMission.totalHours)}</span><span>人员 {formatCredits(resolvedMission.crewRequired * resolvedMission.totalHours * 3.5)}</span><span>折旧 {formatCredits(resolvedMission.purchasePrice / (8 * 360) * resolvedMission.totalHours / 24)}</span></div>
+            {technicalStopComparison && <div className="technical-stop-comparison"><strong>直飞 / 中途技术补给</strong><span>直飞：{technicalStopComparison.direct.feasible ? `${technicalStopComparison.direct.totalFuelBurnTonnes.toFixed(1)} t · ${(technicalStopComparison.direct.totalHours / 24).toFixed(2)} 日` : "不可行"}</span><span>技术停靠：{technicalStopComparison.withTechnicalStop.feasible ? `${technicalStopComparison.withTechnicalStop.totalFuelBurnTonnes.toFixed(1)} t · ${(technicalStopComparison.withTechnicalStop.totalHours / 24).toFixed(2)} 日 · 港口 ${formatCredits(technicalStopComparison.withTechnicalStop.addedPortCost)}` : "不可行"}</span></div>}
+          </article>
+        </div>}
         <nav className="ship-family-menu" aria-label="舰船系列">
           {familyGroups.map((family) => (
             <button key={family.id} className={family.id === selectedFamily?.id ? "active" : ""} onClick={() => {
@@ -386,8 +461,8 @@ export function FleetPanel({
                 <div><span>固定维护</span><strong>{formatCredits(type.fixedMaintenanceCostPerDay * FIXED_MAINTENANCE_COST_SCALE)} / 日</strong></div>
               </div>
               <div className="drive-specs"><div><span>亚光速</span><strong>{formatModeValue(type, "sublight")}</strong></div>{interstellarModes.map((mode) => <div key={mode}><span>{MODE_LABELS[mode]} · 燃料消耗系数 {type.fuelPerDistanceByMode[mode]}</span><strong>{formatModeValue(type, mode)}</strong></div>)}</div>
-              <div className="fuel-curve-table"><div className="fuel-curve-heading"><span>质量—距离自动装载燃料 · 已含 20% 应急裕度</span><small>旅客质量暂时忽略</small></div>{curve.map((point) => <div key={point.label}><span>{point.label}<small>{point.distance.toFixed(0)} 光年 · 速度效率倍率 ×{point.empty.rangeMismatchMultiplier.toFixed(2)}</small></span><strong>消耗 {point.empty.fuelUnits.toFixed(1)} FU<small>起飞燃料 {point.empty.requiredFuelLoadUnits.toFixed(1)} · 燃料舱 {(point.empty.fuelCapacityUtilization * 100).toFixed(0)}%</small></strong></div>)}</div>
-              <div className="purchase-row"><label>协议数量<input type="number" min="1" max="20" value={quantity} onChange={(event) => setQuantities((current) => ({ ...current, [type.id]: Math.max(1, Math.min(20, Math.floor(Number(event.target.value) || 1))) }))} /></label><div><span>当前行情小计</span><strong>{formatCredits(marketUnitPrice * quantity)}</strong></div><button disabled={cartTotal + quantity > 60} onClick={() => setPurchaseCart((current) => ({ ...current, [type.id]: Math.min(20, (current[type.id] ?? 0) + quantity) }))}>加入采购协议</button></div>
+              <div className="fuel-curve-table"><div className="fuel-curve-heading"><span>旧目录投影参考</span><small>正式数据以任务剖面为准</small></div>{curve.map((point) => <div key={point.label}><span>{point.label}<small>{point.distance.toFixed(0)} 光年 · 曲线倍率 ×{point.empty.rangeMismatchMultiplier.toFixed(2)}</small></span><strong>参考装载 {point.empty.carriedFuelMassTonnes.toFixed(1)} t<small>燃料舱 {(point.empty.fuelCapacityUtilization * 100).toFixed(0)}%</small></strong></div>)}</div>
+              <div className="purchase-row"><label>协议数量<input type="number" min="1" max="20" value={quantity} onChange={(event) => setQuantities((current) => ({ ...current, [type.id]: Math.max(1, Math.min(20, Math.floor(Number(event.target.value) || 1))) }))} /></label><div><span>当前配置小计</span><strong>{formatCredits((resolvedMission?.purchasePrice ?? marketUnitPrice) * quantity)}</strong></div><button disabled={cartTotal + quantity > 60 || !resolvedMission?.feasible} onClick={() => { setPurchaseBuilds((current) => ({ ...current, [type.id]: { ...draftBuild, destinationReserveTonnes: missionReserve } })); setPurchaseCart((current) => ({ ...current, [type.id]: Math.min(20, (current[type.id] ?? 0) + quantity) })); }}>按当前配置加入协议</button></div>
             </article>
           );
         })()}</div>

@@ -1344,6 +1344,33 @@ button:disabled { opacity: 0.38; cursor: not-allowed !important; }
 .cabin-help, .sublight-explanation { margin: 10px 0 0; color: #768c95; font-size: 12px; line-height: 1.55; }
 .fleet-card-actions { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .fleet-card-actions button { min-height: 36px; border: 1px solid rgba(112, 163, 177, 0.22); color: #a8c2be; background: rgba(17, 37, 49, 0.7); cursor: pointer; }
+
+.shipyard-builder-grid { display: grid; grid-template-columns: minmax(250px, .78fr) minmax(320px, 1fr) minmax(360px, 1.22fr); gap: 12px; margin: 14px 0 18px; }
+.shipyard-builder-column { min-width: 0; padding: 16px; border: 1px solid rgba(111, 160, 170, .24); background: rgba(5, 16, 24, .82); }
+.shipyard-builder-column h3 { margin: 4px 0 13px; color: #d1dedc; }
+.shipyard-builder-column > strong, .shipyard-builder-column > small { display: block; }
+.shipyard-builder-column > small { margin-top: 6px; color: #78929a; }
+.shipyard-builder-column dl { margin: 14px 0 0; }
+.shipyard-builder-column dl div { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid rgba(111, 160, 170, .12); }
+.shipyard-builder-column dt { color: #78929a; }
+.shipyard-builder-column dd { margin: 0; color: #bed0ce; text-align: right; }
+.options-column > label { display: grid; gap: 5px; margin-bottom: 11px; color: #8fa7ad; }
+.options-column select, .mission-inputs input { min-height: 34px; border: 1px solid rgba(111, 160, 170, .25); color: #bfd0ce; background: #091923; }
+.module-picker { display: grid; gap: 6px; margin-top: 10px; }
+.module-picker > label { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 7px; padding: 5px 0; }
+.module-picker small { color: #718b92; }
+.mission-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; }
+.mission-inputs label { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 5px; color: #829ba2; }
+.mission-inputs label input { grid-column: 1; width: 100%; }
+.mission-inputs label small { grid-column: 2; grid-row: 2; padding-bottom: 8px; }
+.mission-verdict { display: grid; gap: 6px; margin: 14px 0; padding: 11px; border: 1px solid rgba(111, 160, 170, .16); background: rgba(12, 29, 39, .72); }
+.mission-verdict small { color: #d18f88; }
+.mission-phases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.mission-phases div { display: grid; gap: 3px; padding: 8px; border: 1px solid rgba(111, 160, 170, .14); }
+.mission-phases span, .mission-phases small { color: #759198; }
+.mission-costs, .technical-stop-comparison { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 12px; margin-top: 11px; padding: 9px; border: 1px solid rgba(111, 160, 170, .15); color: #8fa7ad; }
+.mission-costs strong, .technical-stop-comparison strong { grid-column: 1 / -1; color: #bdcfcc; }
+@media (max-width: 1180px) { .shipyard-builder-grid { grid-template-columns: 1fr; } }
 .fleet-card-actions button:first-child { border-color: rgba(80, 223, 206, 0.3); color: #c5f6ee; }
 .fleet-card-actions.single-action { grid-template-columns: 1fr; }
 .ship-family-menu { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 8px; }

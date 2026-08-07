@@ -1,9 +1,10 @@
-import { driveEfficiencyMultiplier, estimateInterstellarFuel } from "./fuel.js";
+﻿import { driveEfficiencyMultiplier, estimateInterstellarFuel } from "./fuel.js";
 import { buildRouteServices } from "./routes.js";
 import type {
   CabinConfiguration,
   PassengerClass,
   Route,
+  ShipBuildConfiguration,
   ShipType,
   Starport,
   TravelMode,
@@ -46,6 +47,9 @@ export interface ScheduledFlight {
   originalShipId?: string;
   replacementShipId?: string;
   sublightHours: number;
+  departureSublightHours: number;
+  interstellarHours: number;
+  arrivalSublightHours: number;
   sublightFuelUnits: number;
   interstellarFuelUnits: number;
   extraCrewCost: number;
@@ -96,6 +100,7 @@ export interface SchedulingShip {
   reserveForRouteId?: string | null;
   substitutesForShipId?: string;
   availableMinute?: number;
+  buildConfiguration?: ShipBuildConfiguration;
 }
 
 export interface ScheduleResult {
@@ -361,7 +366,13 @@ export function generateFlightSchedule(input: {
       if (!type) continue;
       let services;
       try {
-        services = buildRouteServices({ ...route, shipTypeId: type.id, assignedShips: 1, cabinCapacityByClass: ship.cabins }, type, input.ports, input.worldLegs);
+        services = buildRouteServices({
+          ...route,
+          shipTypeId: type.id,
+          assignedShips: 1,
+          cabinCapacityByClass: ship.cabins,
+          ...(ship.buildConfiguration ? { buildConfiguration: ship.buildConfiguration } : {}),
+        }, type, input.ports, input.worldLegs);
       } catch {
         continue;
       }
@@ -446,6 +457,9 @@ export function generateFlightSchedule(input: {
             departureSlotStatus: departureSlot?.status ?? "cancelled",
             arrivalSlotStatus: arrivalSlot?.status ?? "cancelled",
             sublightHours: service.sublightHours ?? 0,
+            departureSublightHours: service.departureSublightHours ?? 0,
+            interstellarHours: service.interstellarHours ?? Math.max(0, service.inVehicleHours - (service.sublightHours ?? 0)),
+            arrivalSublightHours: service.arrivalSublightHours ?? 0,
             sublightFuelUnits: service.sublightFuelUnits ?? 0,
             interstellarFuelUnits: service.interstellarFuelUnits ?? 0,
             extraCrewCost,
@@ -463,10 +477,10 @@ export function generateFlightSchedule(input: {
             if (delayReasons.length > 0) logs.push({ id: `${id}:delay`, shipId: ship.id, minute: departureMinute, kind: "delay", portId: service.fromPortId, flightId: id, detail: `${delayReasons.join("、")}：延误 ${arrivalMinute - scheduledArrivalMinute} 分钟` });
             logs.push(
               { id: `${id}:depart`, shipId: ship.id, minute: departureMinute, kind: "departed-starport", portId: service.fromPortId, flightId: id, detail: "完成登机并离开星港" },
-              { id: `${id}:jump`, shipId: ship.id, minute: roundToFiveMinutes(departureMinute + (service.sublightHours ?? 0) * 30), kind: "entered-hyperspace", flightId: id, detail: `完成加速—滑行—减速离港段；亚光速燃料消耗 ${(service.sublightFuelUnits ?? 0).toFixed(1)} FU` },
+              { id: `${id}:jump`, shipId: ship.id, minute: roundToFiveMinutes(departureMinute + (service.departureSublightHours ?? 0) * 60), kind: "entered-hyperspace", flightId: id, detail: `完成加速—滑行—减速离港段；亚光速燃料消耗 ${(service.sublightFuelUnits ?? 0).toFixed(1)} t` },
               { id: `${id}:cruise`, shipId: ship.id, minute: roundToFiveMinutes((departureMinute + arrivalMinute) / 2), kind: "hyperspace-cruise", flightId: id, detail: "星际巡航" },
-              { id: `${id}:system`, shipId: ship.id, minute: Math.max(departureMinute, roundToFiveMinutes(arrivalMinute - (service.sublightHours ?? 0) * 30)), kind: "arrived-system", portId: service.toPortId, flightId: id, detail: "退出星际航行；船速归零" },
-              { id: `${id}:approach`, shipId: ship.id, minute: Math.max(departureMinute, roundToFiveMinutes(arrivalMinute - (service.sublightHours ?? 0) * 30)), kind: "sublight-approach", portId: service.toPortId, flightId: id, detail: "从跃出点加速—滑行—减速前往星港（滑行不消耗燃料）" },
+              { id: `${id}:system`, shipId: ship.id, minute: Math.max(departureMinute, roundToFiveMinutes(arrivalMinute - (service.arrivalSublightHours ?? 0) * 60)), kind: "arrived-system", portId: service.toPortId, flightId: id, detail: "退出星际航行；船速归零" },
+              { id: `${id}:approach`, shipId: ship.id, minute: Math.max(departureMinute, roundToFiveMinutes(arrivalMinute - (service.arrivalSublightHours ?? 0) * 60)), kind: "sublight-approach", portId: service.toPortId, flightId: id, detail: "从跃出点加速—滑行—减速前往星港（滑行不消耗燃料）" },
               { id: `${id}:arrive`, shipId: ship.id, minute: arrivalMinute, kind: "arrived-starport", portId: service.toPortId, flightId: id, detail: "抵达星港" },
             );
             previousDelayByShip.set(ship.id, Math.max(0, arrivalMinute - scheduledArrivalMinute));
