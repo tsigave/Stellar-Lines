@@ -48,6 +48,7 @@ interface ShipMapVisual {
   name: string;
   x: number;
   y: number;
+  headingDegrees: number;
   state: "idle" | "traveling" | "docked" | "paused" | "maintenance" | "grounded";
   status: string;
   routeName: string | null;
@@ -107,7 +108,7 @@ function positionAlongPath(
   systems: readonly StarSystem[],
   durations: readonly number[],
   elapsedHours: number,
-): { x: number; y: number; segmentProgress: number } {
+): { x: number; y: number; segmentProgress: number; headingDegrees: number } {
   let remaining = elapsedHours;
   for (let index = 0; index < durations.length; index += 1) {
     const duration = durations[index]!;
@@ -119,12 +120,19 @@ function positionAlongPath(
         x: (from.x + (to.x - from.x) * progress) * 10,
         y: (from.y + (to.y - from.y) * progress) * 7,
         segmentProgress: progress,
+        headingDegrees: Math.atan2((to.y - from.y) * 7, (to.x - from.x) * 10) * 180 / Math.PI + 90,
       };
     }
     remaining -= duration;
   }
   const end = systems.at(-1)!;
-  return { x: end.x * 10, y: end.y * 7, segmentProgress: 1 };
+  const previous = systems.at(-2) ?? end;
+  return {
+    x: end.x * 10,
+    y: end.y * 7,
+    segmentProgress: 1,
+    headingDegrees: Math.atan2((end.y - previous.y) * 7, (end.x - previous.x) * 10) * 180 / Math.PI + 90,
+  };
 }
 
 function buildShipVisuals(
@@ -145,6 +153,7 @@ function buildShipVisuals(
       name: ship.name,
       x: baseSystem.x * 10 + offsetX,
       y: baseSystem.y * 7 + offsetY,
+      headingDegrees: 0,
       state,
       status,
       routeName,
@@ -190,15 +199,15 @@ function buildShipVisuals(
     const phase = (((simulationDay - 1) * 24 + phaseOffset) % cycleHours + cycleHours) % cycleHours;
     if (phase < travelHours) {
       const position = positionAlongPath(pathSystems, durations, phase);
-      return { id: ship.id, name: ship.name, x: position.x + offsetX, y: position.y + offsetY, state: "traveling", status: `去程航行 · ${Math.round((phase / travelHours) * 100)}%`, routeName: route.name };
+      return { id: ship.id, name: ship.name, x: position.x, y: position.y, headingDegrees: position.headingDegrees, state: "traveling", status: `去程航行 · ${Math.round((phase / travelHours) * 100)}%`, routeName: route.name };
     }
     if (phase < travelHours + 24) {
-      return { id: ship.id, name: ship.name, x: toSystem.x * 10 + offsetX, y: toSystem.y * 7 + offsetY, state: "docked", status: `${toPort.name} 停靠`, routeName: route.name };
+      return { id: ship.id, name: ship.name, x: toSystem.x * 10 + offsetX, y: toSystem.y * 7 + offsetY, headingDegrees: 0, state: "docked", status: `${toPort.name} 停靠`, routeName: route.name };
     }
     if (phase < travelHours * 2 + 24) {
       const returnElapsed = phase - travelHours - 24;
       const position = positionAlongPath([...pathSystems].reverse(), [...durations].reverse(), returnElapsed);
-      return { id: ship.id, name: ship.name, x: position.x + offsetX, y: position.y + offsetY, state: "traveling", status: `返程航行 · ${Math.round((returnElapsed / travelHours) * 100)}%`, routeName: route.name };
+      return { id: ship.id, name: ship.name, x: position.x, y: position.y, headingDegrees: position.headingDegrees, state: "traveling", status: `返程航行 · ${Math.round((returnElapsed / travelHours) * 100)}%`, routeName: route.name };
     }
     return atBase("docked", `${basePort.name} 停靠`, route.name);
   });
@@ -515,7 +524,7 @@ export function GalaxyMap({
                 style={{ transform: `translate(${ship.x}px, ${ship.y}px)` }}
               >
                 <circle r="8" />
-                <path d="M 0 -6 L 5 5 L 0 2 L -5 5 Z" />
+                <path d="M 0 -6 L 5 5 L 0 2 L -5 5 Z" transform={`rotate(${ship.headingDegrees})`} />
                 <text x="11" y="3">{ship.name}</text>
                 <title>{ship.name} · {ship.status}{ship.routeName ? ` · ${ship.routeName}` : ""}</title>
               </g>
